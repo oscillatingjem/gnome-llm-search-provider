@@ -9,6 +9,10 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from llm_search import catalog, config, launch, query, ranker  # noqa: E402
 
+# Results must not depend on what's installed on the test machine: treat every program
+# as installed except ones named "missing-...".
+launch.which = lambda program: None if program.startswith("missing-") else f"/usr/bin/{program}"
+
 EXAMPLE = config.load(ROOT / "examples" / "config")
 # An app whose links accept a model and effort, to exercise those paths.
 EXAMPLE.apps.append(config.App(id="agent", name="Agent", url="x://new?q={prompt}&model={model}&effort={effort}",
@@ -59,7 +63,8 @@ class RankTests(unittest.TestCase):
                 self.assertEqual(rows(text), [])
 
     def test_coding_prompt_puts_claude_code_first(self):
-        self.assertEqual(self.ids("fix this python traceback in my script")[0], "app:claude-code")
+        # The terminal row's priority puts it above the desktop Claude Code row.
+        self.assertEqual(self.ids("fix this python traceback in my script")[:2], ["app:claude-cli", "app:claude-code"])
 
     def test_general_prompt_puts_ask_claude_first(self):
         self.assertEqual(self.ids("what should I cook tonight")[0], "app:claude-chat")
@@ -70,14 +75,16 @@ class RankTests(unittest.TestCase):
         self.assertEqual(top.title, "Agent · Opus")
 
     def test_model_prefix_without_alias(self):
-        top = rows("@son summarize this")[0]
-        self.assertEqual((top.candidate.id, top.model), ("app:agent", "sonnet"))
+        top = rows("@fab summarize this")[0]          # only the terminal row lists "fable"
+        self.assertEqual((top.candidate.id, top.model), ("app:claude-cli", "fable"))
 
     def test_app_alias(self):
         self.assertEqual(self.ids("@code what is a closure")[0], "app:claude-code")
 
     def test_apps_without_efforts_show_none(self):
-        self.assertTrue(all(r.effort is None for r in rows("!high fix this bug") if r.candidate.id.startswith("app:claude")))
+        desktop = [r for r in rows("!high fix this bug") if r.candidate.id in ("app:claude-chat", "app:claude-code")]
+        self.assertEqual(len(desktop), 2)
+        self.assertTrue(all(r.effort is None for r in desktop))
 
     def test_gateway_rows_include_auto_first(self):
         self.assertEqual(self.ids("explain btrfs snapshots", gateway=True)[0], "auto")
@@ -135,14 +142,21 @@ class CommandTests(unittest.TestCase):
 
     def test_missing_requirement_hides_app(self):
         cfg = config.load(ROOT / "examples" / "config")
-        cfg.apps = [config.App(id="x", name="X", command=["x"], requires=["definitely-not-a-program-xyz"])]
+        cfg.apps = [config.App(id="x", name="X", command=["x"], requires=["missing-program"])]
         self.assertEqual(catalog.app_candidates(cfg), [])
+
+    def test_cli_row_hidden_without_claude(self):
+        cfg = config.load(ROOT / "examples" / "config")
+        for app in cfg.apps:
+            app.requires = ["missing-" + r for r in app.requires]
+        self.assertNotIn("app:claude-cli", [c.id for c in catalog.app_candidates(cfg)])
 
     def test_example_cli_row_uses_model_and_effort(self):
         cfg = config.load(ROOT / "examples" / "config")
         app = next(a for a in cfg.apps if a.id == "claude-cli")
         argv, _ = launch.command_for(app, "opus", "xhigh", "refactor this")
-        self.assertEqual(argv[-6:], ["--model", "opus", "--effort", "xhigh", "--", "refactor this"])
+        self.assertEqual(argv, ["/usr/bin/ptyxis", "--new-window", "--", "/usr/bin/claude",
+                                "--model", "opus", "--effort", "xhigh", "--", "refactor this"])
 
     def test_xhigh_effort_parses(self):
         self.assertEqual(query.parse(["!xh", "go"]).effort, "xhigh")
