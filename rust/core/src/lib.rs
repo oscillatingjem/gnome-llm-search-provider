@@ -7,6 +7,7 @@ pub mod launch;
 pub mod pyre;
 pub mod pystr;
 pub mod query;
+pub mod structure;
 pub mod ranker;
 
 /// App identity. `AGENT_SEARCH_VARIANT=rs` gives the side-by-side Rust build its own IDs, name,

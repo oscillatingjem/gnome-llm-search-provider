@@ -359,6 +359,28 @@ pub fn update(edits: &[Edit], directory: Option<&Path>) -> Result<(), UpdateErro
     fs::rename(&tmp, &path).map_err(|e| UpdateError::Io(e.to_string()))
 }
 
+/// Apply structural operations (see `structure`) to agents.toml, atomically and only if the
+/// whole resulting config validates.
+pub fn apply_ops(ops: &[crate::structure::Op], directory: Option<&Path>) -> Result<(), UpdateError> {
+    let directory = directory.map(Path::to_path_buf).unwrap_or_else(config_dir);
+    let path = directory.join(AGENTS_FILE);
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(UpdateError::Io(e.to_string())),
+    };
+    let new = crate::structure::apply(&text, ops).map_err(UpdateError::Edit)?;
+    if new == text {
+        return Ok(());
+    }
+    let tmp = directory.join(format!(".{AGENTS_FILE}.tmp"));
+    fs::write(&tmp, &new).map_err(|e| UpdateError::Io(e.to_string()))?;
+    if let Ok(meta) = fs::metadata(&path) {
+        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(meta.permissions().mode() & 0o777));
+    }
+    fs::rename(&tmp, &path).map_err(|e| UpdateError::Io(e.to_string()))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpdateError {
     Edit(EditError),

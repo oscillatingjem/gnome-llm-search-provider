@@ -17,6 +17,7 @@ glib.workspace = true
 gio.workspace = true
 gtk4.workspace = true
 libadwaita.workspace = true
+toml = "1"
 
 [lints]
 workspace = true

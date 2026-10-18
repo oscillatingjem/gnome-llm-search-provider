@@ -129,7 +129,7 @@ fn header_re() -> &'static Regex {
 }
 
 /// (line index, table name, is array-of-tables) for every table header.
-fn headers(lines: &[String]) -> Vec<(usize, String, bool)> {
+pub(crate) fn headers(lines: &[String]) -> Vec<(usize, String, bool)> {
     let mut out = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         if let Some(m) = header_re().captures(line) {
@@ -144,21 +144,21 @@ fn headers(lines: &[String]) -> Vec<(usize, String, bool)> {
 }
 
 /// End (exclusive) of the table whose header is at `start`.
-fn span(lines: &[String], start: usize) -> usize {
+pub(crate) fn span(lines: &[String], start: usize) -> usize {
     headers(lines).into_iter().map(|(i, _, _)| i).find(|&i| i > start).unwrap_or(lines.len())
 }
 
-fn key_line(key: &str) -> Regex {
+pub(crate) fn key_line(key: &str) -> Regex {
     #[allow(clippy::expect_used)]
     Regex::new(&format!(r"^(\s*){}(\s*=\s*)(.*)$", regex::escape(key))).expect("escaped key")
 }
 
-fn is_complete(value: &str) -> bool {
+pub(crate) fn is_complete(value: &str) -> bool {
     format!("x = {value}").parse::<Table>().is_ok()
 }
 
 /// Split 'value  # comment' into (value, comment), respecting '#' inside strings.
-fn split_value(rest: &str) -> Option<(String, String)> {
+pub(crate) fn split_value(rest: &str) -> Option<(String, String)> {
     let mut cuts: Vec<usize> = rest.match_indices('#').map(|(i, _)| i).collect();
     cuts.push(rest.len());
     for cut in cuts {
@@ -193,7 +193,7 @@ fn set_in_span(
     Ok(())
 }
 
-fn to_lines(text: &str) -> Vec<String> {
+pub(crate) fn to_lines(text: &str) -> Vec<String> {
     pystr::splitlines(text).into_iter().map(str::to_string).collect()
 }
 

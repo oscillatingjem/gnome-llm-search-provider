@@ -12,6 +12,7 @@ dependencies = [
  "glib",
  "gtk4",
  "libadwaita",
+ "toml",
 ]
 
 [[package]]

@@ -12,7 +12,15 @@
 > **Status:**
 > - **Built:** the core (it matches all 577 recorded Python cases), the search provider, the prompt box,
 >   the settings window (today's scope) and `rust/install-side-by-side.sh`.
-> - **Not built yet:** the full settings editor (Phase 4 below), the Rust installer, and prebuilt binaries.
+> - **Full settings editor (Phase 4): built.**
+>   - **Agents page:** every field of an agent, plus add, delete (with its comment block) and rename
+>     (aliases follow the new id).
+>   - **Routing page:** aliases, high-effort patterns and ranking rules, each with add, edit and delete.
+>   - **Gateway:** the key name too.
+>   - **Validation:** each save validates the whole config (it loads, ids are unique, every regex
+>     compiles); patterns turn red while invalid.
+>   - **Tests:** adding then deleting an agent or a rule restores the file byte for byte.
+> - **Not built yet:** the Rust installer and prebuilt binaries.
 > - **Measured:** the provider answers its first query in 29 ms (Python: 164 ms). Memory (PSS) is 4 MB for
 >   the provider (Python: 18 MB) and 31 MB for the prompt box (Python: 51 MB).
 
