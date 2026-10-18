@@ -7,8 +7,11 @@ min_chars = 3        # shorter queries show no rows
 max_rows = 5         # GNOME shows about five rows per category
 
 # --- App agents ---------------------------------------------------------------
-# Opened through a URL. Placeholders: {prompt} {model} {effort} (URL-encoded).
-# Query parameters left empty are dropped, so optional params are safe to include.
+# Opened through a `url` or by running a `command`. Placeholders: {prompt} {model} {effort}.
+# url:     values are URL-encoded; query parameters left empty are dropped.
+# command: an argv list, never run through a shell. An item whose placeholder is empty is
+#          dropped, and a nested list is an optional group (e.g. ["--model", "{model}"]).
+#          `requires` hides the row when a program is missing; `cwd` is where it runs.
 
 [[app]]
 id = "claude-chat"
@@ -29,12 +32,29 @@ url = "claude://code/new?q={prompt}"
 icon = "claude-desktop"
 tags = ["coding", "agent"]
 
+# Claude Code in a terminal: runs the prompt immediately, with the model and effort you
+# choose (@opus, !high). Needs the Claude Code CLI: https://claude.ai/install.sh
+[[app]]
+id = "claude-cli"
+name = "Claude Code (terminal)"
+command = ["ptyxis", "--new-window", "--", "claude",
+           ["--model", "{model}"], ["--effort", "{effort}"], "--", "{prompt}"]
+cwd = "~"
+requires = ["ptyxis", "claude"]
+icon = "utilities-terminal"
+tags = ["coding", "agent"]
+models = ["opus", "sonnet", "haiku", "fable"]
+efforts = ["low", "medium", "high", "xhigh", "max"]
+priority = 0.5
+
 # --- Aliases --------------------------------------------------------------------
 # @name → "<app id>[:<model>]" or "<gateway model>". Prefix matches of ids,
 # names and model names also work without an alias.
 [aliases]
 claude = "claude-chat"
 code = "claude-code"
+cli = "claude-cli"
+term = "claude-cli"
 
 # --- Gateway (optional) ---------------------------------------------------------
 # Uncomment once a LiteLLM proxy is running (see docs/PROVIDERS.md).

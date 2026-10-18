@@ -118,6 +118,36 @@ class RankTests(unittest.TestCase):
                          "x://new?q=refactor%20this&model=opus&effort=high")
 
 
+class CommandTests(unittest.TestCase):
+    TEMPLATE = ["term", "--", "claude", ["--model", "{model}"], ["--effort", "{effort}"], "--", "{prompt}"]
+
+    def test_full_command(self):
+        self.assertEqual(launch.fill_command(self.TEMPLATE, prompt="fix it", model="opus", effort="high"),
+                         ["term", "--", "claude", "--model", "opus", "--effort", "high", "--", "fix it"])
+
+    def test_optional_groups_dropped(self):
+        self.assertEqual(launch.fill_command(self.TEMPLATE, prompt="fix it", model=None, effort=None),
+                         ["term", "--", "claude", "--", "fix it"])
+
+    def test_prompt_is_one_argument_and_not_interpreted(self):
+        argv = launch.fill_command(self.TEMPLATE, prompt="a; rm -rf ~ {model} $(x)", model="m", effort=None)
+        self.assertEqual(argv[-1], "a; rm -rf ~ {model} $(x)")
+
+    def test_missing_requirement_hides_app(self):
+        cfg = config.load(ROOT / "examples" / "config")
+        cfg.apps = [config.App(id="x", name="X", command=["x"], requires=["definitely-not-a-program-xyz"])]
+        self.assertEqual(catalog.app_candidates(cfg), [])
+
+    def test_example_cli_row_uses_model_and_effort(self):
+        cfg = config.load(ROOT / "examples" / "config")
+        app = next(a for a in cfg.apps if a.id == "claude-cli")
+        argv, _ = launch.command_for(app, "opus", "xhigh", "refactor this")
+        self.assertEqual(argv[-6:], ["--model", "opus", "--effort", "xhigh", "--", "refactor this"])
+
+    def test_xhigh_effort_parses(self):
+        self.assertEqual(query.parse(["!xh", "go"]).effort, "xhigh")
+
+
 class UrlTests(unittest.TestCase):
     def test_app_url_encodes_prompt(self):
         url = launch.url_for(EXAMPLE, "app:claude-chat", None, None, "hello & goodbye?")

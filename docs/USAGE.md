@@ -10,7 +10,7 @@ Tokens can go anywhere in the query; everything else is the prompt.
 | Token | Meaning | Examples |
 |---|---|---|
 | `@name` | Send to this agent or model. Matches aliases, ids, names and model names, by prefix. | `@code`, `@claude`, `@coder`, `@son` |
-| `!level` | Effort level: `low` (`l`), `medium` (`m`, `med`), `high` (`h`), `max` (`x`) | `!high`, `!l` |
+| `!level` | Effort level: `low` (`l`), `medium` (`m`, `med`), `high` (`h`), `xhigh` (`xh`), `max` (`x`) | `!high`, `!l` |
 
 ```
 @code why does this test hang          → Claude Code first
@@ -36,5 +36,7 @@ debug, compare, …), **low** for prompts of `low_effort_max_words` words or few
 (**high** above 60 words). If a target doesn't support the level asked for, the closest one it does
 support is used. Targets without effort levels show none.
 
-App agents get effort only if their links accept it. Claude Desktop's don't, so Claude uses the effort
-and model set in the app.
+App agents get a model and effort only if their link or command accepts them. Claude Desktop's links
+don't, so those rows use the app's own settings. The **Claude Code (terminal)** row runs the
+`claude` CLI with `--model` and `--effort`, so `@opus !high fix this` works there, and the prompt runs
+immediately.

@@ -27,6 +27,28 @@ url = "claude://code/new?q={prompt}"
 - `claude://code/new` also accepts `&folder=/absolute/path` (more than once is fine) to start the
   session in a project.
 - The links take no model or effort. Claude uses whatever is set in the app.
+- **They only fill in the prompt; you press Enter.** The app has no link option to send it automatically.
+
+### Claude Code in a terminal (runs immediately)
+With the [Claude Code CLI](https://claude.ai/install.sh) installed and logged in, this row starts the
+session with the prompt already running, using the model and effort you chose:
+```toml
+[[app]]
+id = "claude-cli"
+name = "Claude Code (terminal)"
+command = ["ptyxis", "--new-window", "--", "claude",
+           ["--model", "{model}"], ["--effort", "{effort}"], "--", "{prompt}"]
+cwd = "~"
+requires = ["ptyxis", "claude"]
+models = ["opus", "sonnet", "haiku", "fable"]
+efforts = ["low", "medium", "high", "xhigh", "max"]
+```
+For other terminals, replace the start of `command`:
+- GNOME Console: `["kgx", "--", …]`
+- GNOME Terminal: `["gnome-terminal", "--", …]`
+- Kitty: `["kitty", …]`
+
+Set `cwd` to the project folder you usually work in.
 
 Any other app with a URL scheme works the same way. Use `{model}` and `{effort}` in `url` if its links
 accept them, and list them in `models` and `efforts`.

@@ -20,10 +20,13 @@ def state_dir() -> Path:
 
 @dataclass
 class App:
-    """An app agent opened through a URL, e.g. Claude Desktop via claude://."""
+    """An app agent, opened through a URL (e.g. claude://) or by running a command."""
     id: str
     name: str
-    url: str                              # template: {prompt} {model} {effort}
+    url: str = ""                         # template: {prompt} {model} {effort}
+    command: list = field(default_factory=list)   # argv template; nested lists are optional groups
+    cwd: str = "~"                        # working directory for `command`
+    requires: list[str] = field(default_factory=list)  # programs that must exist; hidden otherwise
     description: str = ""
     icon: str = "system-search-symbolic"
     tags: list[str] = field(default_factory=list)

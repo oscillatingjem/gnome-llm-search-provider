@@ -79,10 +79,15 @@ class SearchProvider:
     def activate(self, rid: str, terms: list[str]) -> None:
         prompt = query_mod.parse(terms).prompt
         cid, model, effort = ranker.parse_result_id(rid)
-        url = launch.url_for(self.config, cid, model, effort, prompt)
         app = next((a for a in self.config.apps if f"app:{a.id}" == cid), None)
         if app and app.copy_prompt:
             launch.copy_to_clipboard(prompt)
+        if app and app.command:
+            argv, cwd = launch.command_for(app, model, effort, prompt)
+            log.info("running %s in %s", argv[0], cwd)
+            launch.run_command(argv, cwd)
+            return
+        url = launch.url_for(self.config, cid, model, effort, prompt)
         if url:
             log.info("opening %s", url.split("?")[0])
             launch.open_url(url)

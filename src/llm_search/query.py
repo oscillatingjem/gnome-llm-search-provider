@@ -2,18 +2,19 @@
 
 Tokens can appear anywhere in the query:
     @name   pick a model or agent by alias (prefix match)
-    !level  pick an effort level (low, medium, high, max)
+    !level  pick an effort level (low, medium, high, xhigh, max)
 Everything else is the prompt.
 """
 
 from dataclasses import dataclass
 
-EFFORTS = ("low", "medium", "high", "max")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 EFFORT_ALIASES = {
     "l": "low", "lo": "low", "low": "low",
     "m": "medium", "med": "medium", "medium": "medium",
     "h": "high", "hi": "high", "high": "high",
+    "xh": "xhigh", "xhigh": "xhigh",
     "x": "max", "max": "max",
 }
 

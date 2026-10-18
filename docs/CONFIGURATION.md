@@ -31,7 +31,10 @@ right away, run `pkill -f llm_search`; the next search starts it again.
 |---|---|---|
 | `id` | yes | Unique id; also matches `@id` |
 | `name` | yes | Row title |
-| `url` | yes | Link to open. Placeholders: `{prompt}`, `{model}`, `{effort}`, all URL-encoded. Query parameters that end up empty are dropped. |
+| `url` | one of `url`/`command` | Link to open. Placeholders: `{prompt}`, `{model}`, `{effort}`, all URL-encoded. Query parameters that end up empty are dropped. |
+| `command` | one of `url`/`command` | Program to run, as an argv list; it's never passed through a shell, so the prompt is always a single argument. Same placeholders. An item whose placeholder is empty is dropped, and a nested list is an optional group dropped as a whole, e.g. `["--model", "{model}"]`. |
+| `cwd` | | Working directory for `command` (default `~`) |
+| `requires` | | Programs that must exist (searched on `PATH` plus `~/.local/bin` and `~/bin`). The row is hidden if any is missing, and matching argv items are replaced with their full path. |
 | `icon` | | Icon name from your icon theme |
 | `tags` | | Capability tags for ranking (`coding`, `writing`, `reasoning`, `private`, `fast`, …) |
 | `models` | | Models the link can choose (`{model}`); lets `@model` pick one |
