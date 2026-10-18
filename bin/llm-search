@@ -15,6 +15,11 @@ DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 BIN_HOME="$HOME/.local/bin"
 COPY_DIR="$DATA_HOME/llm-search"
 RENDER_DIR="$LLM_SEARCH_HOME/state/install"
+# GNOME Shell reads search providers only from system data dirs ($XDG_DATA_DIRS), never from
+# ~/.local/share. So we add a data dir of our own to the session through environment.d.
+XDG_DIR="$LLM_SEARCH_HOME/state/xdg"
+ENVD_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/environment.d/60-llm-search.conf"
+ENVD_GENERATOR="/usr/lib/systemd/user-environment-generators/30-systemd-environment-d-generator"
 
 DRY_RUN=0
 
@@ -72,7 +77,7 @@ check_requirements() {
 links() {
   local n="$APP_ID"
   printf '%s\t%s\n' \
-    "$DATA_HOME/gnome-shell/search-providers/$n.search-provider.ini" "$RENDER_DIR/$n.search-provider.ini" \
+    "$XDG_DIR/gnome-shell/search-providers/$n.search-provider.ini" "$RENDER_DIR/$n.search-provider.ini" \
     "$DATA_HOME/dbus-1/services/$n.service"                       "$RENDER_DIR/$n.service" \
     "$DATA_HOME/applications/$n.desktop"                          "$RENDER_DIR/$n.desktop" \
     "$DATA_HOME/icons/hicolor/scalable/apps/$n.svg"               "$RENDER_DIR/$n.svg" \
@@ -146,7 +151,10 @@ cmd_install() {
     say "  linked $target"
   done < <(links)
 
-  # 3. Make a running provider pick up the new code and config.
+  # 3. Put our data dir on the session's XDG_DATA_DIRS (applies from the next login).
+  install_environment_d
+
+  # 4. Make a running provider pick up the new code and config.
   run pkill -f -- "-m llm_searc[h]" || true
   command -v update-desktop-database >/dev/null && run update-desktop-database -q "$DATA_HOME/applications" || true
 
@@ -156,6 +164,32 @@ cmd_install() {
   say "  2. Settings → Search: turn on \"$CATEGORY\" and move it where you want it."
   say "  3. Edit $LLM_SEARCH_HOME/config/agents.toml to add agents, aliases and a gateway."
   [[ ":$PATH:" == *":$BIN_HOME:"* ]] || say "  note: $BIN_HOME is not on your PATH"
+}
+
+install_environment_d() {
+  local line="XDG_DATA_DIRS=$XDG_DIR:\${XDG_DATA_DIRS:-/usr/local/share/:/usr/share/}"
+  if [[ -f "$ENVD_FILE" ]] && grep -qxF "$line" "$ENVD_FILE"; then
+    say "  keeping $ENVD_FILE"
+  else
+    say "  writing $ENVD_FILE"
+    run mkdir -p "$(dirname "$ENVD_FILE")"
+    if (( ! DRY_RUN )); then
+      printf '# Added by llm-search: lets GNOME Shell find its search provider.\n%s\n' "$line" > "$ENVD_FILE"
+    fi
+  fi
+  # Check the result the way systemd will compute it at login.
+  if (( ! DRY_RUN )) && [[ -x "$ENVD_GENERATOR" ]]; then
+    local dirs
+    dirs="$("$ENVD_GENERATOR" 2>/dev/null | sed -n 's/^XDG_DATA_DIRS=//p')"
+    if [[ ":$dirs:" != *":$XDG_DIR:"* || ":$dirs:" != *":/usr/share/:"* ]]; then
+      rm -f "$ENVD_FILE"   # never leave a file that could break the session's data dirs
+      die "environment.d check failed (XDG_DATA_DIRS would be '$dirs'); removed $ENVD_FILE"
+    fi
+  fi
+  # Legacy location from 0.1.0 (never read by GNOME Shell).
+  local legacy="$DATA_HOME/gnome-shell/search-providers/$APP_ID.search-provider.ini"
+  [[ -L "$legacy" ]] && run rm "$legacy" && say "  removed unused $legacy"
+  return 0
 }
 
 cmd_uninstall() {
@@ -173,6 +207,9 @@ cmd_uninstall() {
   while IFS=$'\t' read -r target source; do
     if [[ -L "$target" ]]; then run rm "$target"; say "  removed $target"; fi
   done < <(CODE_ROOT="$ROOT" links)
+  if [[ -f "$ENVD_FILE" ]] && grep -q 'llm-search' "$ENVD_FILE"; then
+    run rm "$ENVD_FILE"; say "  removed $ENVD_FILE"
+  fi
   run pkill -f -- "-m llm_searc[h]" || true
   if (( purge )); then
     run rm -rf "$LLM_SEARCH_HOME" "$COPY_DIR"

@@ -63,6 +63,11 @@ flowchart LR
 - **A search provider, not an extension.** `SearchProvider2` is a stable, documented D-Bus interface,
   the same one Files, Settings and Firefox use. Extensions patch GNOME Shell's internals and often
   break on major updates.
+- **A session data dir for the `.ini`.** GNOME Shell reads `gnome-shell/search-providers/` only from
+  system data dirs (`collectFromDatadirs(..., false)` in `remoteSearch.js`), not from `~/.local/share`.
+  Rather than requiring root, the installer adds `$LLM_SEARCH_HOME/state/xdg` to the session's
+  `XDG_DATA_DIRS` through `environment.d`. The D-Bus service and desktop entry can stay in
+  `~/.local/share`, where per-user files are supported.
 - **The category comes from a desktop entry.** GNOME takes the category's name and icon from the
   provider's `DesktopId`, and skips hidden entries. So the project ships a visible entry, which opens
   the chat UI when launched.

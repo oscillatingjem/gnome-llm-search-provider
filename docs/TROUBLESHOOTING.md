@@ -2,6 +2,10 @@
 
 ## The Agents category doesn't appear
 1. **Log out and back in.** GNOME Shell only looks for new providers at login.
+   Afterwards, `systemctl --user show-environment | grep XDG_DATA_DIRS` should start with
+   `~/.llm-search/state/xdg`. If it doesn't, check `~/.config/environment.d/60-llm-search.conf`.
+   A provider `.ini` in `~/.local/share/gnome-shell/search-providers/` is **ignored**: GNOME Shell
+   only reads that folder under the system data dirs.
 2. **Settings → Search:** check that Agents is turned on.
 3. `llm-search status`: every line should say `ok`.
 4. Check that the query has at least `min_chars` characters (default 3), not counting `@`/`!` tokens.

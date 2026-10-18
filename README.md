@@ -60,8 +60,12 @@ The installer:
 1. checks the requirements and prints the install command for your distro if something is missing;
 2. creates the config location, `~/.llm-search/` (`config/` and `state/`), and copies the example
    configs without overwriting existing ones;
-3. links the provider into `~/.local/share` (search provider, D-Bus service, desktop entry and icon)
-   and the `llm-search` command into `~/.local/bin`.
+3. links the D-Bus service, desktop entry and icon into `~/.local/share`, and the `llm-search` command
+   into `~/.local/bin`;
+4. writes `~/.config/environment.d/60-llm-search.conf`, which adds `~/.llm-search/state/xdg` to your
+   session's `XDG_DATA_DIRS`. GNOME Shell only reads search providers from system data folders, never
+   from `~/.local/share`, so this lets it find the provider without root. The installer checks the
+   result with systemd's own generator, and removes the file again if the check fails.
 
 It's safe to run again. Options:
 
@@ -78,7 +82,8 @@ LLM_SEARCH_HOME=~/.config/llm-search ./install.sh
 ```
 
 ### 3. Log out and back in
-GNOME Shell only looks for new search providers at login. Afterwards, open **Settings → Search**
+GNOME Shell only looks for new search providers at login, and the `XDG_DATA_DIRS` change also takes
+effect only then. Afterwards, open **Settings → Search**
 to check that **Agents** is turned on, and drag it to where you want it in the list.
 
 ## Configure
