@@ -1,43 +1,34 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <!-- Agent Search: a magnifying glass picking out one undercover agent from a row of them. -->
+  <!-- Agent Search: a magnifying glass picking out one undercover agent from a row of them.
+       Each agent is two colors: skin (fill) and outfit (stroke color via `color`). -->
   <defs>
     <clipPath id="lens"><circle cx="64" cy="64" r="22"/></clipPath>
-    <!-- one agent: fedora, sunglasses, trench coat with shirt and tie; no facial features -->
+    <!-- one agent: fedora, sunglasses, trench coat and tie in the outfit color; head and shirt in skin -->
     <g id="agent">
-      <path d="M18 84a14 13 0 0 1 28 0z"/>
-      <path d="M28 72l4 6 4-6z" fill="#deddda"/>
-      <path d="M31 73h2l.6 5-1.6 2-1.6-2z" fill="#241f31"/>
-      <circle cx="32" cy="60" r="8" fill="#9a9996"/>
-      <rect x="24.6" y="57.4" width="6.6" height="4.4" rx="1.6" fill="#241f31"/>
-      <rect x="32.8" y="57.4" width="6.6" height="4.4" rx="1.6" fill="#241f31"/>
-      <rect x="30" y="58.2" width="4" height="1.4" fill="#241f31"/>
-      <rect x="20" y="52" width="24" height="3.4" rx="1.7" fill="#241f31"/>
-      <path d="M25 52.5l1.6-8.5q5.4-2.6 10.8 0l1.6 8.5z" fill="#241f31"/>
+      <path d="M18 84a14 13 0 0 1 28 0z" fill="currentColor"/>           <!-- coat -->
+      <path d="M28 72l4 6 4-6z"/>                                          <!-- shirt (skin) -->
+      <path d="M31 73h2l.6 5-1.6 2-1.6-2z" fill="currentColor"/>           <!-- tie -->
+      <circle cx="32" cy="60" r="8"/>                                      <!-- head (skin) -->
+      <g fill="currentColor">
+        <rect x="24.6" y="57.4" width="6.6" height="4.4" rx="1.6"/>       <!-- sunglasses -->
+        <rect x="32.8" y="57.4" width="6.6" height="4.4" rx="1.6"/>
+        <rect x="30" y="58.2" width="4" height="1.4"/>
+        <rect x="20" y="52" width="24" height="3.4" rx="1.7"/>            <!-- fedora -->
+        <path d="M25 52.5l1.6-8.5q5.4-2.6 10.8 0l1.6 8.5z"/>
+      </g>
     </g>
   </defs>
   <rect x="8" y="8" width="112" height="112" rx="24" fill="#3d3846"/>
 
-  <!-- the row: two agents beside the lens -->
-  <use href="#agent" fill="#77767b"/>
-  <rect x="25.6" y="49.6" width="12.8" height="2.2" fill="#5e5c64"/>
-  <use href="#agent" x="64" fill="#77767b"/>
-  <rect x="89.6" y="49.6" width="12.8" height="2.2" fill="#5e5c64"/>
+  <!-- the row: two grayscale agents beside the lens -->
+  <use href="#agent" fill="#c0bfbc" color="#77767b"/>
+  <use href="#agent" x="64" fill="#c0bfbc" color="#77767b"/>
 
-  <!-- the lens, with the middle agent magnified (brighter, with a red hat band) -->
+  <!-- the lens, with the middle agent magnified: gray skin, red outfit -->
   <circle cx="64" cy="64" r="25" fill="#5e5c64"/>
   <g clip-path="url(#lens)">
-    <g transform="translate(64 67) scale(1.15) translate(-32 -64)">
-      <path d="M18 84a14 13 0 0 1 28 0z" fill="#c0bfbc"/>
-      <path d="M28 72l4 6 4-6z" fill="#ffffff"/>
-      <path d="M31 73h2l.6 5-1.6 2-1.6-2z" fill="#241f31"/>
-      <circle cx="32" cy="60" r="8" fill="#f6f5f4"/>
-      <rect x="24.6" y="57.4" width="6.6" height="4.4" rx="1.6" fill="#241f31"/>
-      <rect x="32.8" y="57.4" width="6.6" height="4.4" rx="1.6" fill="#241f31"/>
-      <rect x="30" y="58.2" width="4" height="1.4" fill="#241f31"/>
-      <rect x="20" y="52" width="24" height="3.4" rx="1.7" fill="#241f31"/>
-      <path d="M25 52.5l1.6-8.5q5.4-2.6 10.8 0l1.6 8.5z" fill="#241f31"/>
-      <rect x="25.6" y="49.6" width="12.8" height="2.2" fill="#e01b24"/>
-    </g>
+    <use href="#agent" fill="#c0bfbc" color="#e01b24"
+         transform="translate(64 67) scale(1.15) translate(-32 -64)"/>
   </g>
   <circle cx="64" cy="64" r="25" fill="none" stroke="#f6f5f4" stroke-width="6"/>
   <path d="M82 82l16 16" stroke="#f6f5f4" stroke-width="10" stroke-linecap="round"/>
