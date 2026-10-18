@@ -1,5 +1,6 @@
 """Build the URL or command for a chosen row, and open or run it."""
 
+import logging
 import os
 import re
 import shutil
@@ -8,7 +9,9 @@ from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from .config import App, Config
-from .ranker import APP, AUTO, MODEL
+from .ranker import APP, AUTO, MODEL, parse_result_id
+
+log = logging.getLogger("llm-search")
 
 PLACEHOLDER = re.compile(r"\{(\w+)\}")
 # D-Bus starts the provider with the session's PATH, which often lacks per-user bin folders.
@@ -97,3 +100,20 @@ def copy_to_clipboard(text: str) -> None:
 def open_url(url: str) -> None:
     from gi.repository import Gio  # imported here so the rest of the module is testable without GI
     Gio.AppInfo.launch_default_for_uri(url, None)
+
+
+def activate(config: Config, result_id: str, prompt: str) -> None:
+    """Send `prompt` to the row `result_id`: run its command or open its URL."""
+    cid, model, effort = parse_result_id(result_id)
+    app = next((a for a in config.apps if f"app:{a.id}" == cid), None)
+    if app and app.copy_prompt:
+        copy_to_clipboard(prompt)
+    if app and app.command:
+        argv, cwd = command_for(app, model, effort, prompt)
+        log.info("running %s in %s", argv[0], cwd)
+        run_command(argv, cwd)
+        return
+    url = url_for(config, cid, model, effort, prompt)
+    if url:
+        log.info("opening %s", url.split("?")[0])
+        open_url(url)

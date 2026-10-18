@@ -1,8 +1,20 @@
 # Usage
 
-Press <kbd>Super</kbd> and type. Once the query has at least 3 characters (`min_chars`), the **Agents**
+Press <kbd>Super</kbd> and type. Once the query has at least 3 characters (`min_chars`), the **Agent Search**
 category shows up to 5 rows (`max_rows`). Use the arrow keys to pick one and press <kbd>Enter</kbd>, or click
 the category icon to send the prompt to the top row.
+
+## The prompt box
+A small window with one text field and the same rows as the search bar. Open it with:
+- the keyboard shortcut chosen at install (`./install.sh --shortcut '<Primary><Super>space'`), which
+  you can change in Settings → Keyboard → Custom Shortcuts;
+- **Agent Search** in the app grid;
+- the **Agent Search** icon next to its rows in GNOME search, which carries over what you typed;
+- `llm-search prompt [text]` from a terminal or script.
+
+<kbd>Enter</kbd> sends to the selected row (the top one by default), <kbd>↑</kbd>/<kbd>↓</kbd> or
+<kbd>Tab</kbd> choose another, and <kbd>Esc</kbd> or clicking elsewhere closes it. After closing, it
+keeps running for `[prompt] idle_minutes` (default 30) so it reopens instantly.
 
 ## Picking a model and effort
 Tokens can go anywhere in the query; everything else is the prompt.

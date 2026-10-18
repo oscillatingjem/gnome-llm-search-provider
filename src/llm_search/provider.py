@@ -8,9 +8,7 @@ import gi
 gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
-from . import catalog, config as config_mod, launch, query as query_mod, ranker  # noqa: E402
-
-APP_ID = "io.github.oscillatingjem.LlmSearchProvider"
+from . import APP_ID, PROVIDER_ID, catalog, config as config_mod, launch, query as query_mod, ranker  # noqa: E402
 IDLE_TIMEOUT_MS = 60_000
 
 INTERFACE_XML = """
@@ -77,31 +75,19 @@ class SearchProvider:
         return out
 
     def activate(self, rid: str, terms: list[str]) -> None:
-        prompt = query_mod.parse(terms).prompt
-        cid, model, effort = ranker.parse_result_id(rid)
-        app = next((a for a in self.config.apps if f"app:{a.id}" == cid), None)
-        if app and app.copy_prompt:
-            launch.copy_to_clipboard(prompt)
-        if app and app.command:
-            argv, cwd = launch.command_for(app, model, effort, prompt)
-            log.info("running %s in %s", argv[0], cwd)
-            launch.run_command(argv, cwd)
-            return
-        url = launch.url_for(self.config, cid, model, effort, prompt)
-        if url:
-            log.info("opening %s", url.split("?")[0])
-            launch.open_url(url)
+        launch.activate(self.config, rid, query_mod.parse(terms).prompt)
 
     def launch_search(self, terms: list[str]) -> None:
-        """Clicking the category icon: send the prompt to the top-ranked row."""
-        ids = self.search(terms)
-        if ids:
-            self.activate(ids[0], terms)
+        """Clicking the category icon: open the prompt box with the query, to refine it there."""
+        Gio.bus_get_sync(Gio.BusType.SESSION).call(
+            APP_ID, "/" + APP_ID.replace(".", "/"), "org.freedesktop.Application", "ActivateAction",
+            GLib.Variant("(sava{sv})", ("search", [GLib.Variant("s", " ".join(terms))], {})),
+            None, Gio.DBusCallFlags.NONE, -1, None, None, None)
 
 
 class Application(Gio.Application):
     def __init__(self):
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.IS_SERVICE)
+        super().__init__(application_id=PROVIDER_ID, flags=Gio.ApplicationFlags.IS_SERVICE)
         self.set_inactivity_timeout(IDLE_TIMEOUT_MS)
         self.provider = SearchProvider()
         self._registration = 0

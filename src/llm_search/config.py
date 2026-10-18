@@ -57,6 +57,7 @@ class Config:
     litellm_key_env: str = "LITELLM_MASTER_KEY"
     chat_url: str = ""                    # template: {model} {prompt}
     auto_model: str = "smart-router"
+    prompt_idle_minutes: float = 30.0     # prompt box stays running this long after use; 0 = quit
     secrets: dict[str, str] = field(default_factory=dict)
 
 
@@ -99,5 +100,6 @@ def load(directory: Path | None = None) -> Config:
         litellm_key_env=gateway.get("key_env", "LITELLM_MASTER_KEY"),
         chat_url=gateway.get("chat_url", ""),
         auto_model=gateway.get("auto_model", "smart-router"),
+        prompt_idle_minutes=data.get("prompt", {}).get("idle_minutes", 30.0),
         secrets=read_env_file(directory / "secrets.env"),
     )

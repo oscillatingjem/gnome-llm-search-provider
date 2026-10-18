@@ -1,21 +1,27 @@
-# gnome-llm-search-provider
+# Agent Search (gnome-llm-search-provider)
 
-Send prompts to LLMs and AI agents straight from the GNOME search bar.
+Send prompts to LLMs and AI agents straight from the GNOME search bar, or from a spotlight-style
+prompt box on a keyboard shortcut.
 
 Press <kbd>Super</kbd>, type a prompt, and pick where it goes. Your normal search results stay as they
-are: this adds one more category (by default called **Agents**) next to the others, like Firefox's
-"Search the web".
+are: this adds one more category, **Agent Search**, next to the others, like Firefox's "Search the web".
+Or press your shortcut (for example <kbd>Ctrl</kbd>+<kbd>Super</kbd>+<kbd>Space</kbd>) to open the
+**prompt box**: the same rows in a small window of its own, without the rest of GNOME's search.
 
 ```
-Agents
+Agent Search
+  Claude Code (terminal)   “fix this python traceback” · low effort · coding
   Claude Code              “fix this python traceback” · coding
   Ask Claude               “fix this python traceback”
   Auto                     “fix this python traceback” · medium effort     ← with a gateway
   Qwen Coder (LAN)         “fix this python traceback” · coding, private   ← with a gateway
 ```
 
-- **App agents.** Opens desktop apps through their URL links with the prompt filled in. Claude Desktop
-  (chat and Claude Code) is set up out of the box.
+- **App agents.** Opens desktop apps through their URL links with the prompt filled in, or runs a
+  command. Claude Desktop (chat and Claude Code) and Claude Code in a terminal (which runs the prompt
+  immediately, with the model and effort you pick) are set up out of the box.
+- **Prompt box.** A spotlight-style window with the same rows, opened from the app grid, a keyboard
+  shortcut, or the category icon in search. It stays running after first use so it opens instantly.
 - **Any API model, through a gateway.** Point it at a [LiteLLM](https://github.com/BerriAI/litellm) proxy
   and every model the proxy serves shows up: OpenAI, Anthropic API, LM Studio, Ollama, vLLM, and others.
   Answers open in [Open WebUI](https://github.com/open-webui/open-webui) or any chat UI that takes the
@@ -73,7 +79,8 @@ It's safe to run again. Options:
 |---|---|
 | `--dry-run` | Show what it would do without changing anything |
 | `--copy` | Copy the code to `~/.local/share/llm-search` instead of running from this checkout |
-| `--category-name NAME` | Name of the search category (default `Agents`) |
+| `--name NAME` | Name shown in search and the app grid (default `Agent Search`) |
+| `--shortcut BINDING` | Keyboard shortcut for the prompt box, e.g. `'<Primary><Super>space'` (Ctrl+Super+Space). Added as a GNOME custom shortcut, so you can change it in Settings → Keyboard |
 
 To keep config somewhere else, set `LLM_SEARCH_HOME` when you install. The installer writes the path
 into the D-Bus service file, so the provider uses it even though GNOME doesn't pass along your shell's environment:
@@ -84,7 +91,10 @@ LLM_SEARCH_HOME=~/.config/llm-search ./install.sh
 ### 3. Log out and back in
 GNOME Shell only looks for new search providers at login, and the `XDG_DATA_DIRS` change also takes
 effect only then. Afterwards, open **Settings → Search**
-to check that **Agents** is turned on, and drag it to where you want it in the list.
+to check that **Agent Search** is turned on, and drag it to where you want it in the list.
+
+Upgrading from 0.2 or earlier: the app ID changed to `io.github.oscillatingjem.AgentSearch`. The
+installer removes the old files, and you need to log out and back in once for the renamed category.
 
 ## Configure
 Config lives in `~/.llm-search/config/`:
@@ -103,7 +113,7 @@ The provider reloads its config when it restarts, which happens on its own after
 llm-search status          what's installed, and whether the provider is running
 llm-search query WORDS...  run a search over D-Bus, the way GNOME Shell does
 llm-search test            run the unit tests
-llm-search open            open the chat UI (or Claude Desktop)
+llm-search prompt [TEXT]   open the prompt box (with TEXT filled in)
 llm-search uninstall       remove the links (add --purge to also delete ~/.llm-search)
 ```
 

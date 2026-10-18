@@ -2,8 +2,8 @@
 #  llm-search configuration: agents.toml
 # ==============================================================================
 #
-#  This file decides what appears in the "Agents" category of GNOME search, and
-#  what happens when you pick a row.
+#  This file decides what appears in the "Agent Search" category of GNOME search
+#  and in the prompt box, and what happens when you pick a row.
 #
 #  WHERE IT LIVES
 #    $LLM_SEARCH_HOME/config/agents.toml   (default: ~/.llm-search/config/agents.toml)
@@ -18,7 +18,7 @@
 #  TESTING CHANGES WITHOUT GNOME
 #    llm-search query fix this python traceback   # the rows GNOME would get, top first
 #    llm-search test                              # the project's own tests
-#    If the file has a syntax error, no Agents rows appear at all; check with
+#    If the file has a syntax error, no Agent Search rows appear at all; check with
 #        python3 -c "import tomllib; tomllib.load(open('$HOME/.llm-search/config/agents.toml','rb'))"
 #
 #  TOML IN 30 SECONDS
@@ -45,12 +45,27 @@
 # ------------------------------------------------------------------------------
 [search]
 
-# Prompts shorter than this many characters show no Agents rows, so typing
+# Prompts shorter than this many characters show no Agent Search rows, so typing
 # "fi" to find Firefox isn't cluttered. @name and !level tokens don't count.
 min_chars = 3
 
 # The most rows to show. GNOME displays about five per category.
 max_rows = 5
+
+
+# ------------------------------------------------------------------------------
+#  [prompt]: the prompt box (spotlight-style window)
+# ------------------------------------------------------------------------------
+#  Open it from the app grid ("Agent Search"), with the keyboard shortcut chosen
+#  at install time (./install.sh --shortcut '<Primary><Super>space'), by clicking
+#  the Agent Search icon in search results, or with:  llm-search prompt [text]
+#  It shows the same rows as the search bar. Enter sends, Up/Down choose, Esc closes.
+# ------------------------------------------------------------------------------
+[prompt]
+
+# After you close it, the box keeps running in the background for this many
+# minutes, so it opens instantly next time (it uses about 40 MB). 0 = quit at once.
+idle_minutes = 30
 
 
 # ------------------------------------------------------------------------------

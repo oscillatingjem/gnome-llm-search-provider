@@ -32,6 +32,9 @@ flowchart LR
         W --> GW
     end
 
+    K["Keyboard shortcut / app grid<br/>(gapplication launch)"] --> BOX["Prompt box<br/>prompt.py (GTK4)"]
+    GS -.->|"category icon:<br/>ActivateAction search"| BOX
+    BOX --> RK
     L2 -->|"gateway rows → chat_url"| W
     L2 -->|"app rows → app URL"| APPS["Desktop apps<br/>claude://claude.ai/new?q=…<br/>claude://code/new?q=…"]
 
@@ -42,6 +45,7 @@ flowchart LR
 ## Components
 | File | Role |
 |---|---|
+| `src/llm_search/prompt.py` | The prompt box: a GTK4/libadwaita `Adw.Application` (`io.github.oscillatingjem.AgentSearch`), D-Bus-activatable, that ranks the same rows. It hides instead of quitting and exits after `[prompt] idle_minutes` |
 | `src/llm_search/provider.py` | Implements `SearchProvider2` on a `Gio.Application` (`IS_SERVICE`) that D-Bus starts on the first search and that exits after 60 s idle |
 | `src/llm_search/query.py` | Splits `@model` and `!effort` tokens from the prompt |
 | `src/llm_search/catalog.py` | Builds candidates from `[[app]]` entries and the gateway's `/model/info`, grouping effort variants by `model_info.base` |
@@ -69,6 +73,11 @@ flowchart LR
   Rather than requiring root, the installer adds `$LLM_SEARCH_HOME/state/xdg` to the session's
   `XDG_DATA_DIRS` through `environment.d`. The D-Bus service and desktop entry can stay in
   `~/.local/share`, where per-user files are supported.
+- **The desktop entry is the prompt box.** GNOME only accepts a provider whose `DesktopId` entry is
+  visible, so the entry always shows in the app grid. Rather than a launcher that does little, it opens
+  the prompt box, and the same window serves as a router you can reach from a keyboard shortcut without
+  going through GNOME's overview. The search provider uses its own bus name
+  (`io.github.oscillatingjem.AgentSearch.SearchProvider`) so the app ID stays the box's.
 - **The category comes from a desktop entry.** GNOME takes the category's name and icon from the
   provider's `DesktopId`, and skips hidden entries. So the project ships a visible entry, which opens
   the chat UI when launched.

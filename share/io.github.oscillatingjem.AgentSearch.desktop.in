@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=@CATEGORY@
+Comment=Send a prompt to Claude, local models and other AI agents
+Icon=io.github.oscillatingjem.AgentSearch
+Exec=@BIN@ prompt
+DBusActivatable=true
+Categories=Utility;
+Keywords=AI;LLM;Agent;Chat;Prompt;Claude;Spotlight;Launcher;
+StartupNotify=true

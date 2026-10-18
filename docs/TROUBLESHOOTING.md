@@ -1,12 +1,12 @@
 # Troubleshooting
 
-## The Agents category doesn't appear
+## The Agent Search category doesn't appear
 1. **Log out and back in.** GNOME Shell only looks for new providers at login.
    Afterwards, `systemctl --user show-environment | grep XDG_DATA_DIRS` should start with
    `~/.llm-search/state/xdg`. If it doesn't, check `~/.config/environment.d/60-llm-search.conf`.
    A provider `.ini` in `~/.local/share/gnome-shell/search-providers/` is **ignored**: GNOME Shell
    only reads that folder under the system data dirs.
-2. **Settings → Search:** check that Agents is turned on.
+2. **Settings → Search:** check that Agent Search is turned on.
 3. `llm-search status`: every line should say `ok`.
 4. Check that the query has at least `min_chars` characters (default 3), not counting `@`/`!` tokens.
 
@@ -41,3 +41,11 @@ The provider loads config once at start. Run `pkill -f llm_search`; the next sea
 ## Pressing Enter does nothing
 - App rows: check that the app handles its scheme (`xdg-mime query default x-scheme-handler/claude`).
 - Gateway rows: `[gateway] chat_url` has to be set.
+
+## The prompt box doesn't open, or opens without focus
+- `llm-search status` should show the shortcut, and `llm-search prompt` should open the box.
+- If the shortcut does nothing, check Settings → Keyboard → Custom Shortcuts for a conflict.
+- If the box opens behind other windows or without keyboard focus, GNOME's focus-stealing prevention
+  is in the way: please open an issue with your GNOME version.
+- Errors: `journalctl --user -b | grep -i AgentSearch`, or run it in a terminal:
+  `pkill -f llm_search.prompt; PYTHONPATH=src python3 -m llm_search.prompt`.
