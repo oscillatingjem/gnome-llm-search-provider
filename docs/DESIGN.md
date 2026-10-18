@@ -46,7 +46,8 @@ flowchart LR
 | File | Role |
 |---|---|
 | `src/llm_search/prompt.py` | The prompt box: a GTK4/libadwaita `Adw.Application` (`io.github.oscillatingjem.AgentSearch`), D-Bus-activatable, that ranks the same rows. It hides instead of quitting and exits after `[prompt] idle_minutes` |
-| `src/llm_search/prefs.py` | The settings window (`Adw.Window` with General / Agents / Gateway pages). Saves to `settings.toml` and `secrets.env`, then reloads |
+| `src/llm_search/prefs.py` | The settings window (`Adw.Window` with General / Agents / Gateway pages). Saves into `agents.toml` (and keys into `secrets.env`), then reloads; refreshes on outside edits |
+| `src/llm_search/toml_edit.py` | Changes single values in `agents.toml` in place, keeping comments, and verifies each edit |
 | `src/llm_search/shortcut.py` | Reads and writes the prompt box's GNOME custom shortcut |
 | `src/llm_search/provider.py` | Implements `SearchProvider2` on a `Gio.Application` (`IS_SERVICE`) that D-Bus starts on the first search and that exits after 60 s idle |
 | `src/llm_search/query.py` | Splits `@model` and `!effort` tokens from the prompt |
@@ -75,10 +76,12 @@ flowchart LR
   Rather than requiring root, the installer adds `$LLM_SEARCH_HOME/state/xdg` to the session's
   `XDG_DATA_DIRS` through `environment.d`. The D-Bus service and desktop entry can stay in
   `~/.local/share`, where per-user files are supported.
-- **Settings never rewrite `agents.toml`.** TOML writers drop comments, and that file is the
-  documentation, so the window writes a separate `settings.toml` with only the keys it manages, merged
-  over `agents.toml` at load time. Both processes compare file timestamps before each search or open,
-  so changes apply without restarting.
+- **One source of settings, edited in place.** The window and the user edit the same `agents.toml`.
+  General TOML writers drop comments, and that file's comments are its documentation, so
+  `toml_edit.py` changes only the line it needs, then parses the result and reads the value back
+  before an atomic save. Multi-line values are left to the file. Both processes compare file
+  timestamps before each search or open, so changes apply without restarting. Keys stay in
+  `secrets.env` and the shortcut in GNOME's settings, where each belongs.
 - **The desktop entry is the prompt box.** GNOME only accepts a provider whose `DesktopId` entry is
   visible, so the entry always shows in the app grid. Rather than a launcher that does little, it opens
   the prompt box, and the same window serves as a router you can reach from a keyboard shortcut without

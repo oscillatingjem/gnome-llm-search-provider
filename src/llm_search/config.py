@@ -1,16 +1,16 @@
-"""Load user configuration from $LLM_SEARCH_HOME (default ~/.llm-search).
+"""Load and save user configuration in $LLM_SEARCH_HOME (default ~/.llm-search).
 
-Two files make up the configuration:
-  agents.toml    written by hand (commented); agents, aliases, routing rules
-  settings.toml  written by the settings window; overrides agents.toml, so the
-                 window never has to rewrite (and lose the comments of) agents.toml
+agents.toml is the single source of settings. You edit it by hand, and the settings window
+edits the same file in place (toml_edit keeps its comments). Two things live elsewhere on
+purpose: API keys in secrets.env (mode 600), and the keyboard shortcut in GNOME's settings.
 """
 
-import json
 import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from . import toml_edit
 
 
 def home() -> Path:
@@ -86,15 +86,8 @@ def read_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-AGENTS_FILE, SETTINGS_FILE, SECRETS_FILE = "agents.toml", "settings.toml", "secrets.env"
-# Keys the settings window may override, per section of agents.toml.
-OVERRIDABLE = {
-    "search": {"min_chars", "max_rows"},
-    "prompt": {"idle_minutes"},
-    "routing": {"low_effort_max_words"},
-    "gateway": {"url", "key_env", "chat_url", "auto_model"},
-}
-APP_OVERRIDABLE = {"enabled", "priority", "cwd"}
+AGENTS_FILE, SECRETS_FILE = "agents.toml", "secrets.env"
+LEGACY_SETTINGS_FILE = "settings.toml"   # 0.4.0 kept window settings here; migrated on load
 
 
 def _read_toml(path: Path) -> dict:
@@ -105,33 +98,23 @@ def _read_toml(path: Path) -> dict:
         return {}
 
 
-def read_settings(directory: Path | None = None) -> dict:
-    return _read_toml((directory or config_dir()) / SETTINGS_FILE)
+def update(edits: list[tuple[str, str, str | None, object]], directory: Path | None = None) -> None:
+    """Change values in agents.toml in place (see toml_edit.apply for the edit format).
 
-
-def _toml_value(value) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return repr(value)
-    return json.dumps(str(value))       # a JSON string is a valid TOML basic string
-
-
-def write_settings(data: dict, directory: Path | None = None) -> None:
-    """Write settings.toml: [section] tables of scalars, plus [app.<id>] tables."""
-    lines = ["# Written by the Agent Search settings window. These values override agents.toml.",
-             "# Delete a line (or this file) to go back to what agents.toml says.", ""]
-    for section, values in data.items():
-        if section == "app":
-            continue
-        if values:
-            lines += [f"[{section}]", *(f"{k} = {_toml_value(v)}" for k, v in values.items()), ""]
-    for app_id, values in data.get("app", {}).items():
-        if values:
-            lines += [f"[app.{json.dumps(app_id)}]", *(f"{k} = {_toml_value(v)}" for k, v in values.items()), ""]
-    path = (directory or config_dir()) / SETTINGS_FILE
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text("\n".join(lines))
+    The file is rewritten atomically, and only if every edit verifies.
+    """
+    path = (directory or config_dir()) / AGENTS_FILE
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        text = ""
+    new = toml_edit.apply(text, edits)
+    if new == text:
+        return
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(new)
+    if path.exists():
+        os.chmod(tmp, path.stat().st_mode & 0o777)
     tmp.replace(path)
 
 
@@ -152,10 +135,10 @@ def set_secret(key: str, value: str, directory: Path | None = None) -> None:
 
 
 def signature(directory: Path | None = None) -> tuple:
-    """Changes whenever any config file changes; used to reload without restarting."""
+    """Changes whenever agents.toml or secrets.env changes; used to reload without restarting."""
     directory = directory or config_dir()
     out = []
-    for name in (AGENTS_FILE, SETTINGS_FILE, SECRETS_FILE):
+    for name in (AGENTS_FILE, SECRETS_FILE):
         try:
             st = (directory / name).stat()
             out.append((st.st_mtime_ns, st.st_size))
@@ -164,21 +147,44 @@ def signature(directory: Path | None = None) -> tuple:
     return tuple(out)
 
 
-def _merge(data: dict, overrides: dict) -> dict:
-    for section, keys in OVERRIDABLE.items():
-        values = {k: v for k, v in overrides.get(section, {}).items() if k in keys}
-        if values:
-            data.setdefault(section, {}).update(values)
-    app_overrides = overrides.get("app", {})
-    for app in data.get("app", []):
-        values = {k: v for k, v in app_overrides.get(app.get("id"), {}).items() if k in APP_OVERRIDABLE}
-        app.update(values)
-    return data
+# General settings with factory values (Config's field defaults). A factory reset puts these
+# back and leaves agents, aliases, routing rules and the gateway alone.
+GENERAL = {
+    ("search", "min_chars"): "min_chars",
+    ("search", "max_rows"): "max_rows",
+    ("prompt", "idle_minutes"): "prompt_idle_minutes",
+    ("routing", "low_effort_max_words"): "low_effort_max_words",
+}
+
+
+def restore_defaults(directory: Path | None = None) -> None:
+    factory = Config()
+    update([(table, key, None, getattr(factory, attr)) for (table, key), attr in GENERAL.items()], directory)
+
+
+def migrate_legacy_settings(directory: Path) -> None:
+    """Fold a 0.4.0 settings.toml into agents.toml once, then remove it."""
+    legacy = directory / LEGACY_SETTINGS_FILE
+    data = _read_toml(legacy)
+    if not legacy.exists():
+        return
+    edits = [(table, key, None, value)
+             for table in ("search", "prompt", "routing", "gateway")
+             for key, value in data.get(table, {}).items()]
+    edits += [("app", key, app_id, value)
+              for app_id, values in data.get("app", {}).items()
+              for key, value in values.items() if key in ("enabled", "priority", "cwd")]
+    try:
+        update(edits, directory)
+    except (toml_edit.EditError, OSError):
+        return                                   # leave it in place rather than lose settings
+    legacy.rename(legacy.with_name(LEGACY_SETTINGS_FILE + ".migrated"))
 
 
 def load(directory: Path | None = None) -> Config:
     directory = directory or config_dir()
-    data = _merge(_read_toml(directory / AGENTS_FILE), _read_toml(directory / SETTINGS_FILE))
+    migrate_legacy_settings(directory)
+    data = _read_toml(directory / AGENTS_FILE)
 
     search = data.get("search", {})
     routing = data.get("routing", {})

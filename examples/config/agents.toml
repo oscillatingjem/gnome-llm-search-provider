@@ -14,10 +14,10 @@
 #    Saved changes apply on the next search, or the next time the prompt box opens.
 #
 #  THE SETTINGS WINDOW
-#    The gear on the prompt box (or Ctrl+,) changes common settings without editing
-#    this file. It saves them to settings.toml in this folder, which overrides the
-#    values here. If a value here seems to be ignored, check settings.toml (or use
-#    "Reset Settings" in the window).
+#    The gear on the prompt box (or Ctrl+,) edits this same file: it changes just the
+#    value on the line in question and keeps every comment, so this file and the
+#    window always agree. "Restore Defaults" there resets the limits in [search],
+#    [prompt] and [routing] to factory values, keeping your agents and rules.
 #
 #  TESTING CHANGES WITHOUT GNOME
 #    llm-search query fix this python traceback   # the rows GNOME would get, top first

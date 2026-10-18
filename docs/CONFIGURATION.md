@@ -12,20 +12,36 @@
     install/         rendered service and desktop files (the installer recreates these)
 ```
 
-### `settings.toml`
-Written by the settings window (gear on the prompt box). It holds only what you changed there, and
-overrides `agents.toml`, so the window never rewrites your commented file. These keys can be set:
+### One source of settings
+`agents.toml` is the only settings file. The settings window (gear on the prompt box) edits the same
+file you do: it changes just the value on the line in question, keeps every comment, adds a key below
+its table header when the key is missing, and checks the result before saving. So the file and the
+window always agree, and you can switch between them freely. If you edit the file while the window is
+open, the window refreshes.
 
-| Section | Keys |
+What the window can change:
+
+| Table | Keys |
 |---|---|
 | `[search]` | `min_chars`, `max_rows` |
 | `[prompt]` | `idle_minutes` |
 | `[routing]` | `low_effort_max_words` |
-| `[gateway]` | `url`, `key_env`, `chat_url`, `auto_model` |
-| `[app."<id>"]` | `enabled`, `priority`, `cwd` |
+| `[gateway]` | `url`, `chat_url`, `auto_model` |
+| each `[[app]]` | `enabled`, `priority`, `cwd` |
 
-Anything else in it is ignored. Delete a line (or the file, or use **Reset Settings**) to go back to
-`agents.toml`. The gateway key typed in the window is saved to `secrets.env`, never to `settings.toml`.
+Everything else (agents, commands, aliases, ranking rules) is edited in the file.
+
+Two things are deliberately kept elsewhere, and the window shows and edits both:
+- **API keys** go in `secrets.env` (mode 600), so secrets never sit in a file you might share.
+- **The keyboard shortcut** is a GNOME custom shortcut, because GNOME reads shortcuts from its own
+  settings. It also appears in Settings → Keyboard → Custom Shortcuts.
+
+**Restore Defaults** (General page) puts the table above's `[search]`, `[prompt]` and `[routing]`
+values back to factory defaults in `agents.toml`. Agents, aliases, rules, the gateway and the shortcut
+are kept.
+
+Upgrading from 0.4.0, which kept window settings in a separate `settings.toml`: it's merged into
+`agents.toml` automatically and renamed to `settings.toml.migrated`.
 
 `LLM_SEARCH_HOME` is read when you run `install.sh`, and the installer writes it into the D-Bus service
 file. To move your config, re-run the installer with the new value.

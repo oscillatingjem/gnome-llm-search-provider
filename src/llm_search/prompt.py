@@ -139,7 +139,7 @@ class PromptApp(Adw.Application):
         self.gateway = catalog.Gateway(self.config)
         self.window: PromptWindow | None = None
         self.settings: SettingsWindow | None = None
-        self._signature = config_mod.signature()
+        self.signature = config_mod.signature()
         self._idle_source = 0
 
         search = Gio.SimpleAction.new("search", GLib.VariantType.new("s"))
@@ -162,25 +162,26 @@ class PromptApp(Adw.Application):
 
     def open(self, text: str | None) -> None:
         self.cancel_idle_timer()
-        if config_mod.signature() != self._signature:
+        if config_mod.signature() != self.signature:
             self.reload()
         if self.window is None:
             self.window = PromptWindow(self)
         self.window.summon(text)
 
-    def open_settings(self) -> None:
+    def open_settings(self) -> SettingsWindow:
         self.cancel_idle_timer()
         if self.window is not None and self.window.get_visible():
             self.window.set_visible(False)
         if self.settings is None or not self.settings.get_visible():
             self.settings = SettingsWindow(self)
         self.settings.present()
+        return self.settings
 
     def reload(self) -> None:
         """Re-read the config files (after the settings window saves, or on outside edits)."""
         self.config = config_mod.load()
         self.gateway = catalog.Gateway(self.config)
-        self._signature = config_mod.signature()
+        self.signature = config_mod.signature()
 
     def start_idle_timer(self) -> None:
         self.cancel_idle_timer()

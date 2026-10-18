@@ -1,7 +1,8 @@
 """The settings window, opened from the gear on the prompt box.
 
-Changes are saved straight away to settings.toml (see config.py), which overrides agents.toml.
-The prompt box and the search provider both pick them up without restarting.
+Every change is written straight into agents.toml, the single source of settings, keeping its
+comments (see toml_edit.py). The prompt box and the search provider pick changes up without
+restarting, and this window refreshes itself if agents.toml is edited while it's open.
 """
 
 import gi
@@ -10,7 +11,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-from . import catalog, config as config_mod, launch, shortcut  # noqa: E402
+from . import catalog, config as config_mod, launch, shortcut, toml_edit  # noqa: E402
 
 DOCS = "https://github.com/oscillatingjem/gnome-llm-search-provider/blob/main/docs/"
 
@@ -20,12 +21,9 @@ class SettingsWindow(Adw.Window):
         super().__init__(application=app, title="Agent Search Settings")
         self.app = app
         self.set_default_size(600, 680)
-        self.overrides = config_mod.read_settings(self.directory)
 
         self.stack = Adw.ViewStack()
-        self.stack.add_titled_with_icon(self.general_page(), "general", "General", "preferences-system-symbolic")
-        self.stack.add_titled_with_icon(self.agents_page(), "agents", "Agents", "system-users-symbolic")
-        self.stack.add_titled_with_icon(self.gateway_page(), "gateway", "Gateway", "network-server-symbolic")
+        self.build_pages()
 
         header = Adw.HeaderBar(title_widget=Adw.ViewSwitcher(stack=self.stack,
                                                              policy=Adw.ViewSwitcherPolicy.WIDE))
@@ -38,7 +36,41 @@ class SettingsWindow(Adw.Window):
         keys.connect("key-pressed", self.on_key)
         self.add_controller(keys)
         # Once closed (not while closing, when it still counts as visible), let the app idle out.
-        self.connect("close-request", lambda *_: GLib.idle_add(self.app.start_idle_timer) and False)
+        self.connect("close-request", self.on_close)
+
+        # Stay in sync with agents.toml when it's edited elsewhere (e.g. by hand) while open.
+        self._refresh_source = 0
+        self.monitor = Gio.File.new_for_path(str(self.directory / config_mod.AGENTS_FILE)).monitor_file(
+            Gio.FileMonitorFlags.WATCH_MOVES, None)
+        self.monitor.connect("changed", lambda *_: self.schedule_refresh())
+
+    def build_pages(self) -> None:
+        visible = self.stack.get_visible_child_name()
+        pages = self.stack.get_pages()
+        for child in [pages.get_item(i).get_child() for i in range(pages.get_n_items())]:
+            self.stack.remove(child)
+        self.stack.add_titled_with_icon(self.general_page(), "general", "General", "preferences-system-symbolic")
+        self.stack.add_titled_with_icon(self.agents_page(), "agents", "Agents", "system-users-symbolic")
+        self.stack.add_titled_with_icon(self.gateway_page(), "gateway", "Gateway", "network-server-symbolic")
+        if visible:
+            self.stack.set_visible_child_name(visible)
+
+    def schedule_refresh(self) -> None:
+        if not self._refresh_source:
+            self._refresh_source = GLib.timeout_add(300, self.refresh_from_disk)
+
+    def refresh_from_disk(self) -> bool:
+        self._refresh_source = 0
+        if config_mod.signature(self.directory) != self.app.signature:   # not our own save
+            self.app.reload()
+            self.build_pages()
+            self.toast("Updated from agents.toml")
+        return GLib.SOURCE_REMOVE
+
+    def on_close(self, *_):
+        self.monitor.cancel()
+        GLib.idle_add(self.app.start_idle_timer)
+        return False
 
     def on_key(self, _ctl, keyval, _code, _state) -> bool:
         if keyval == Gdk.KEY_Escape:
@@ -53,18 +85,19 @@ class SettingsWindow(Adw.Window):
     # --- saving ---------------------------------------------------------------------
 
     def save(self, section: str, key: str, value) -> None:
-        self.overrides.setdefault(section, {})[key] = value
-        self._write()
+        self._write([(section, key, None, value)])
 
     def save_app(self, app_id: str, key: str, value) -> None:
-        self.overrides.setdefault("app", {}).setdefault(app_id, {})[key] = value
-        self._write()
+        self._write([("app", key, app_id, value)])
 
-    def _write(self) -> None:
+    def _write(self, edits) -> None:
         try:
-            config_mod.write_settings(self.overrides, self.directory)
+            config_mod.update(edits, self.directory)
+        except toml_edit.EditError as e:
+            self.toast(f"Couldn't save: {e}")
+            return
         except OSError as e:
-            self.toast(f"Couldn't save settings: {e.strerror}")
+            self.toast(f"Couldn't save: {e.strerror}")
             return
         self.app.reload()
 
@@ -136,8 +169,10 @@ class SettingsWindow(Adw.Window):
         files = Adw.PreferencesGroup(title="Configuration Files")
         files.add(self.button_row("agents.toml", "Add agents, aliases and ranking rules. Every setting is explained in the file",
                                   "Open", lambda: self.open_file(config_mod.AGENTS_FILE), "document-edit-symbolic"))
-        files.add(self.button_row("Reset Settings", "Forget the changes made here and use agents.toml as written",
-                                  "Reset", self.reset))
+        files.add(self.button_row("Restore Defaults",
+                                  "Puts the settings on this page back to factory values. "
+                                  "Agents, rules, the gateway and the shortcut are kept",
+                                  "Restore…", self.confirm_restore))
         files.add(self.button_row("Documentation", "Search syntax, providers and troubleshooting",
                                   "Open", lambda: launch.open_url(DOCS + "USAGE.md"), "help-browser-symbolic"))
         page.add(files)
@@ -159,13 +194,28 @@ class SettingsWindow(Adw.Window):
     def open_file(self, name: str) -> None:
         launch.open_url(Gio.File.new_for_path(str(self.directory / name)).get_uri())
 
-    def reset(self) -> None:
-        path = self.directory / config_mod.SETTINGS_FILE
-        path.unlink(missing_ok=True)
+    def confirm_restore(self) -> None:
+        dialog = Adw.AlertDialog(
+            heading="Restore Defaults?",
+            body="Minimum characters, rows shown, the low-effort limit and how long the box keeps "
+                 "running go back to factory values in agents.toml. Your agents, aliases, ranking "
+                 "rules, gateway and shortcut are kept.")
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("restore", "Restore")
+        dialog.set_response_appearance("restore", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.connect("response", lambda _d, r: r == "restore" and self.restore())
+        dialog.present(self)
+
+    def restore(self) -> None:
+        try:
+            config_mod.restore_defaults(self.directory)
+        except (toml_edit.EditError, OSError) as e:
+            self.toast(f"Couldn't restore defaults: {getattr(e, 'strerror', None) or e}")
+            return
         self.app.reload()
-        self.toast("Settings reset to agents.toml")
-        self.close()
-        self.app.open_settings()
+        self.close()                       # rebuild so every row shows the restored values
+        self.app.open_settings().toast("Defaults restored")
 
     # --- Agents -----------------------------------------------------------------------
 

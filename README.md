@@ -104,8 +104,7 @@ Config lives in `~/.llm-search/config/`:
 
 | File | What it holds |
 |---|---|
-| `agents.toml` | App agents, `@aliases`, ranking rules, the optional gateway |
-| `settings.toml` | Written by the settings window; overrides `agents.toml`. Delete it to go back |
+| `agents.toml` | Everything: app agents, `@aliases`, ranking rules, limits, the optional gateway. The settings window edits this same file, keeping its comments |
 | `secrets.env` | API keys for the gateway (mode 600; never committed) |
 
 Changes apply on the next search or the next time the prompt box opens; no restart needed. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and

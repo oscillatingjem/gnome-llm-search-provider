@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from llm_search import catalog, config, launch, query, ranker  # noqa: E402
+from llm_search import catalog, config, launch, query, ranker, toml_edit  # noqa: E402
 
 # Results must not depend on what's installed on the test machine: treat every program
 # as installed except ones named "missing-...".
@@ -163,38 +163,78 @@ class CommandTests(unittest.TestCase):
 
 
 class SettingsTests(unittest.TestCase):
-    """settings.toml (written by the settings window) overrides agents.toml."""
+    """The settings window edits agents.toml itself: one source of settings, comments kept."""
 
     def setUp(self):
         import shutil, tempfile
         self.dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.dir)
         shutil.copy(ROOT / "examples" / "config" / "agents.toml", self.dir / "agents.toml")
+        self.original = (self.dir / "agents.toml").read_text()
 
-    def test_overrides_apply(self):
-        config.write_settings({"search": {"min_chars": 5}, "prompt": {"idle_minutes": 0},
-                               "app": {"claude-cli": {"enabled": False, "cwd": "~/Projects", "priority": 2.5}}},
-                              self.dir)
+    def text(self):
+        return (self.dir / "agents.toml").read_text()
+
+    def test_edits_apply_and_keep_every_comment(self):
+        config.update([("search", "min_chars", None, 5), ("prompt", "idle_minutes", None, 0),
+                       ("app", "enabled", "claude-cli", False), ("app", "cwd", "claude-cli", "~/Projects"),
+                       ("app", "priority", "claude-cli", 2.5)], self.dir)
         c = config.load(self.dir)
         cli = next(a for a in c.apps if a.id == "claude-cli")
         self.assertEqual((c.min_chars, c.prompt_idle_minutes), (5, 0))
         self.assertEqual((cli.enabled, cli.cwd, cli.priority), (False, "~/Projects", 2.5))
         self.assertNotIn("app:claude-cli", [x.id for x in catalog.app_candidates(c)])
+        comments = lambda s: [ln for ln in s.splitlines() if ln.lstrip().startswith("#")]
+        self.assertEqual(comments(self.text()), comments(self.original))
+        self.assertIn('priority = 2.5        # ranks above the desktop "Claude Code" row', self.text())
 
-    def test_unknown_keys_are_ignored(self):
-        (self.dir / "settings.toml").write_text('[search]\nbogus = 1\n[app.claude-cli]\ncommand = ["rm"]\n')
-        c = config.load(self.dir)
+    def test_only_the_edited_lines_change(self):
+        import difflib
+        config.update([("search", "max_rows", None, 4), ("app", "priority", "claude-chat", 2.0)], self.dir)
+        changed = [d for d in difflib.ndiff(self.original.splitlines(), self.text().splitlines())
+                   if d[:1] in "+-"]
+        self.assertEqual(changed, ["- max_rows = 5", "+ max_rows = 4",
+                                   "- priority = 1.0        # the default choice for everyday questions",
+                                   "+ priority = 2.0        # the default choice for everyday questions"])
+
+    def test_missing_gateway_table_is_added(self):
+        config.update([("gateway", "url", None, "http://127.0.0.1:4000/#x")], self.dir)
+        self.assertEqual(config.load(self.dir).litellm_url, "http://127.0.0.1:4000/#x")
+
+    def test_unknown_agent_is_refused_and_file_untouched(self):
+        with self.assertRaises(toml_edit.EditError):
+            config.update([("app", "enabled", "no-such-agent", False)], self.dir)
+        self.assertEqual(self.text(), self.original)
+
+    def test_multiline_values_are_refused(self):
+        with self.assertRaises(toml_edit.EditError):
+            config.update([("app", "command", "claude-cli", "rm")], self.dir)
+        self.assertEqual(self.text(), self.original)
+
+    def test_restore_defaults_resets_general_but_keeps_agents_rules_and_gateway(self):
+        config.update([("search", "min_chars", None, 9), ("search", "max_rows", None, 2),
+                       ("prompt", "idle_minutes", None, 0), ("routing", "low_effort_max_words", None, 20),
+                       ("gateway", "url", None, "http://127.0.0.1:4000"),
+                       ("app", "enabled", "claude-cli", False), ("app", "cwd", "claude-cli", "~/work")], self.dir)
+        config.restore_defaults(self.dir)
+        c, factory = config.load(self.dir), config.Config()
+        self.assertEqual((c.min_chars, c.max_rows, c.prompt_idle_minutes, c.low_effort_max_words),
+                         (factory.min_chars, factory.max_rows, factory.prompt_idle_minutes, factory.low_effort_max_words))
         cli = next(a for a in c.apps if a.id == "claude-cli")
-        self.assertEqual(cli.command[0], "ptyxis")      # commands can only come from agents.toml
+        self.assertEqual((cli.enabled, cli.cwd), (False, "~/work"))         # agent settings kept
+        self.assertEqual(c.litellm_url, "http://127.0.0.1:4000")             # gateway kept
+        self.assertEqual((len(c.apps), len(c.rules)), (3, 5))                # agents and rules kept
 
-    def test_round_trip_with_awkward_strings(self):
-        data = {"gateway": {"chat_url": 'http://x/?q={prompt}&m="a\\b"'}, "app": {"odd id": {"cwd": "~/ä ö"}}}
-        config.write_settings(data, self.dir)
-        self.assertEqual(config.read_settings(self.dir), data)
+    def test_legacy_settings_file_is_migrated_once(self):
+        (self.dir / "settings.toml").write_text('[search]\nmax_rows = 3\n[app."claude-cli"]\ncwd = "~/x"\n')
+        c = config.load(self.dir)
+        self.assertEqual((c.max_rows, next(a.cwd for a in c.apps if a.id == "claude-cli")), (3, "~/x"))
+        self.assertFalse((self.dir / "settings.toml").exists())
+        self.assertIn("max_rows = 3", self.text())
 
-    def test_signature_changes_on_write(self):
+    def test_signature_changes_on_update(self):
         before = config.signature(self.dir)
-        config.write_settings({"search": {"max_rows": 3}}, self.dir)
+        config.update([("search", "max_rows", None, 3)], self.dir)
         self.assertNotEqual(before, config.signature(self.dir))
 
     def test_set_secret_keeps_other_lines_and_mode(self):
