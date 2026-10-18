@@ -102,6 +102,15 @@ class RankTests(unittest.TestCase):
         coder = next(r for r in rows("@coder explain this regex", gateway=True))
         self.assertEqual((coder.candidate.id, coder.effort), ("model:coder", None))
 
+    def test_result_ids_change_with_the_query(self):
+        # Regression: GNOME caches rows by id, so identical ids froze the shown prompt.
+        foo = {r.candidate.id: r.result_id for r in rows("foo")}
+        foobar = {r.candidate.id: r.result_id for r in rows("foo bar")}
+        self.assertTrue(foo and foo.keys() == foobar.keys())
+        self.assertTrue(all(foo[k] != foobar[k] for k in foo))
+        self.assertEqual(foo, {r.candidate.id: r.result_id for r in rows("foo")})   # stable for the same query
+        self.assertEqual(len(set(foo.values())), len(foo))                         # unique within one search
+
     def test_result_id_round_trip(self):
         row = rows("@opus !high refactor this")[0]
         self.assertEqual(ranker.parse_result_id(row.result_id), ("app:agent", "opus", "high"))

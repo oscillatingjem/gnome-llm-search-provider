@@ -54,7 +54,8 @@ flowchart LR
 ## Search flow
 1. GNOME Shell calls `GetInitialResultSet(terms)` as you type, then `GetSubsearchResultSet` as you keep typing.
 2. The provider parses the terms, ranks the candidates, and returns result ids of the form
-   `<candidate>|<model>|<effort>` (e.g. `app:claude-code||`, `model:gpt|high`).
+   `<candidate>|<model>|<effort>|<query key>` (e.g. `app:claude-code|||48726cc7f5c5`). The query key is a
+   short hash of the query: GNOME Shell caches rows by id, so the id has to change when the query does.
 3. `GetResultMetas` returns each row's title, description (prompt, effort, matched tags) and icon.
 4. `ActivateResult(id, terms)` builds the URL from the id and the prompt in `terms`, then opens it.
    `LaunchSearch` (clicking the category icon) opens the top row.

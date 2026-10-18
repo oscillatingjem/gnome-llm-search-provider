@@ -1,5 +1,6 @@
 """Turn a parsed query and the available agents/models into ranked search rows."""
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 
@@ -29,10 +30,13 @@ class Row:
     model: str | None = None      # app agents: chosen model
     effort: str | None = None
     reasons: list[str] = field(default_factory=list)
+    query_key: str = ""           # changes with the query; see query_key()
 
     @property
     def result_id(self) -> str:
-        return f"{self.candidate.id}|{self.model or ''}|{self.effort or ''}"
+        # GNOME Shell caches rows by id and only fetches metas for new ids, so the id must
+        # change whenever the query does, or the row keeps showing the old prompt.
+        return f"{self.candidate.id}|{self.model or ''}|{self.effort or ''}|{self.query_key}"
 
     @property
     def title(self) -> str:
@@ -49,6 +53,11 @@ class Row:
         if self.reasons:
             parts.append(", ".join(self.reasons))
         return " · ".join(parts)
+
+
+def query_key(query: Query) -> str:
+    text = f"{query.model or ''}\0{query.effort or ''}\0{query.prompt}"
+    return hashlib.blake2s(text.encode(), digest_size=6).hexdigest()
 
 
 def parse_result_id(result_id: str) -> tuple[str, str | None, str | None]:
@@ -112,9 +121,11 @@ def rank(query: Query, candidates: list[Candidate], config: Config) -> list[Row]
     effort = query.effort or suggest_effort(query.prompt, config)
     tags = matched_tags(query.prompt, config)
 
+    key = query_key(query)
+
     def make_row(c: Candidate, model: str | None = None) -> Row:
         # With no @model, app agents keep their own default model.
-        return Row(c, model, clamp_effort(effort, c.efforts), [t for t in tags if t in c.tags])
+        return Row(c, model, clamp_effort(effort, c.efforts), [t for t in tags if t in c.tags], key)
 
     rows: list[Row] = []
     if query.model:
