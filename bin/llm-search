@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+# llm-search: install, uninstall and manage the GNOME LLM search provider.
+# Usage: llm-search <install|uninstall|status|test|open|help> [options]
+set -euo pipefail
+
+APP_ID="io.github.oscillatingjem.LlmSearchProvider"
+OBJECT_PATH="/io/github/oscillatingjem/LlmSearchProvider"
+
+# Resolve the repo/install root even when called through a symlink.
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+
+LLM_SEARCH_HOME="${LLM_SEARCH_HOME:-$HOME/.llm-search}"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+BIN_HOME="$HOME/.local/bin"
+COPY_DIR="$DATA_HOME/llm-search"
+RENDER_DIR="$LLM_SEARCH_HOME/state/install"
+
+DRY_RUN=0
+
+say()  { printf '%s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+run()  { if (( DRY_RUN )); then say "  would run: $*"; else "$@"; fi; }
+
+# --- Requirements -------------------------------------------------------------
+
+distro_hint() {
+  local id="" like=""
+  if [[ -r /etc/os-release ]]; then
+    id="$(. /etc/os-release; echo "${ID:-}")"
+    like="$(. /etc/os-release; echo "${ID_LIKE:-}")"
+  fi
+  case " $id $like " in
+    *" fedora "*|*" rhel "*) say "sudo dnf install python3-gobject" ;;
+    *" debian "*|*" ubuntu "*) say "sudo apt install python3-gi gir1.2-glib-2.0" ;;
+    *" arch "*) say "sudo pacman -S python-gobject" ;;
+    *" suse "*|*" opensuse "*) say "sudo zypper install python3-gobject" ;;
+    *) say "install PyGObject (python3-gobject / python3-gi) with your package manager" ;;
+  esac
+}
+
+find_python() {
+  local py
+  for py in "${PYTHON:-}" /usr/bin/python3 "$(command -v python3 || true)"; do
+    [[ -n "$py" && -x "$py" ]] || continue
+    if "$py" -c 'import sys; assert sys.version_info >= (3, 11)' 2>/dev/null; then
+      echo "$py"; return 0
+    fi
+  done
+  return 1
+}
+
+check_requirements() {
+  local ok=1 py
+  if ! py="$(find_python)"; then
+    warn "Python 3.11 or newer is required"; ok=0
+  elif ! "$py" -c 'import gi; gi.require_version("Gio", "2.0"); from gi.repository import Gio' 2>/dev/null; then
+    warn "PyGObject (Gio) is missing. Install it with: $(distro_hint)"; ok=0
+  fi
+  command -v gnome-shell >/dev/null || warn "GNOME Shell not found; the provider only works in GNOME"
+  command -v xdg-open >/dev/null || warn "xdg-open not found (package xdg-utils)"
+  command -v wl-copy >/dev/null || command -v xclip >/dev/null \
+    || say "note: install wl-clipboard to enable the copy-prompt option"
+  (( ok )) || exit 1
+  PY="$py"
+}
+
+# --- Install --------------------------------------------------------------------
+
+# target → source pairs, shared by install, uninstall and status
+links() {
+  local n="$APP_ID"
+  printf '%s\t%s\n' \
+    "$DATA_HOME/gnome-shell/search-providers/$n.search-provider.ini" "$RENDER_DIR/$n.search-provider.ini" \
+    "$DATA_HOME/dbus-1/services/$n.service"                       "$RENDER_DIR/$n.service" \
+    "$DATA_HOME/applications/$n.desktop"                          "$RENDER_DIR/$n.desktop" \
+    "$DATA_HOME/icons/hicolor/scalable/apps/$n.svg"               "$RENDER_DIR/$n.svg" \
+    "$BIN_HOME/llm-search"                                        "$CODE_ROOT/bin/llm-search"
+}
+
+render() {  # render <template> <dest>
+  local src="$1" dest="$2"
+  if (( DRY_RUN )); then say "  would render $(basename "$dest")"; return; fi
+  sed -e "s|@SRC@|$CODE_ROOT/src|g" -e "s|@HOME@|$LLM_SEARCH_HOME|g" \
+      -e "s|@PYTHON@|$PY|g" -e "s|@BIN@|$BIN_HOME/llm-search|g" \
+      -e "s|@CATEGORY@|$CATEGORY|g" "$src" > "$dest"
+}
+
+cmd_install() {
+  local copy=0
+  CATEGORY="Agents"
+  while (( $# )); do
+    case "$1" in
+      --copy) copy=1 ;;
+      --dry-run) DRY_RUN=1 ;;
+      --category-name) CATEGORY="${2:?}"; shift ;;
+      *) die "unknown option for install: $1" ;;
+    esac
+    shift
+  done
+  [[ "$LLM_SEARCH_HOME" != *" "* && "$ROOT" != *" "* ]] || die "paths with spaces are not supported"
+
+  check_requirements
+  say "Installing llm-search"
+  say "  config home: $LLM_SEARCH_HOME"
+
+  CODE_ROOT="$ROOT"
+  if (( copy )); then
+    CODE_ROOT="$COPY_DIR"
+    say "  copying code to $COPY_DIR"
+    run mkdir -p "$COPY_DIR"
+    run cp -r "$ROOT/bin" "$ROOT/src" "$ROOT/share" "$ROOT/examples" "$COPY_DIR/"
+  else
+    say "  code runs from $ROOT"
+  fi
+
+  # 1. Config location; never overwrite existing files.
+  run mkdir -p "$LLM_SEARCH_HOME/config" "$LLM_SEARCH_HOME/state" "$RENDER_DIR"
+  local f
+  for f in "$ROOT"/examples/config/*; do
+    local name; name="$(basename "$f")"
+    [[ "$name" == secrets.env.example ]] && name="secrets.env"
+    if [[ -e "$LLM_SEARCH_HOME/config/$name" ]]; then
+      say "  keeping existing config/$name"
+    else
+      say "  creating config/$name"
+      run cp "$f" "$LLM_SEARCH_HOME/config/$name"
+    fi
+  done
+  run chmod 600 "$LLM_SEARCH_HOME/config/secrets.env"
+
+  # 2. Render templates into state/install, then link them where GNOME and D-Bus look.
+  local s="$ROOT/share" n="$APP_ID"
+  render "$s/$n.service.in" "$RENDER_DIR/$n.service"
+  render "$s/$n.desktop.in" "$RENDER_DIR/$n.desktop"
+  run cp "$s/$n.search-provider.ini" "$s/$n.svg" "$RENDER_DIR/"
+
+  local target source
+  while IFS=$'\t' read -r target source; do
+    run mkdir -p "$(dirname "$target")"
+    if [[ -e "$target" && ! -L "$target" ]]; then
+      warn "$target exists and is not a symlink; leaving it alone"; continue
+    fi
+    run ln -sfn "$source" "$target"
+    say "  linked $target"
+  done < <(links)
+
+  # 3. Make a running provider pick up the new code and config.
+  run pkill -f -- "-m llm_searc[h]" || true
+  command -v update-desktop-database >/dev/null && run update-desktop-database -q "$DATA_HOME/applications" || true
+
+  say ""
+  say "Done. Next steps:"
+  say "  1. Log out and back in (GNOME Shell reads search providers at login)."
+  say "  2. Settings → Search: turn on \"$CATEGORY\" and move it where you want it."
+  say "  3. Edit $LLM_SEARCH_HOME/config/agents.toml to add agents, aliases and a gateway."
+  [[ ":$PATH:" == *":$BIN_HOME:"* ]] || say "  note: $BIN_HOME is not on your PATH"
+}
+
+cmd_uninstall() {
+  local purge=0
+  while (( $# )); do
+    case "$1" in
+      --purge) purge=1 ;;
+      --dry-run) DRY_RUN=1 ;;
+      *) die "unknown option for uninstall: $1" ;;
+    esac
+    shift
+  done
+  CODE_ROOT="$ROOT"
+  local target source
+  while IFS=$'\t' read -r target source; do
+    if [[ -L "$target" ]]; then run rm "$target"; say "  removed $target"; fi
+  done < <(CODE_ROOT="$ROOT" links)
+  run pkill -f -- "-m llm_searc[h]" || true
+  if (( purge )); then
+    run rm -rf "$LLM_SEARCH_HOME" "$COPY_DIR"
+    say "  removed $LLM_SEARCH_HOME"
+  else
+    run rm -rf "$RENDER_DIR"
+    say "  kept your config in $LLM_SEARCH_HOME (use --purge to remove it)"
+  fi
+  say "Log out and back in to remove the category from search."
+}
+
+# --- Other commands -------------------------------------------------------------------
+
+cmd_status() {
+  CODE_ROOT="$ROOT"
+  say "config home: $LLM_SEARCH_HOME"
+  local target source
+  while IFS=$'\t' read -r target source; do
+    if [[ -L "$target" ]]; then say "  ok      $target"; else say "  missing $target"; fi
+  done < <(links)
+  if gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+       --method org.freedesktop.DBus.NameHasOwner "$APP_ID" 2>/dev/null | grep -q true; then
+    say "provider: running"
+  else
+    say "provider: not running (it starts on the next search)"
+  fi
+}
+
+cmd_test() {
+  local py; py="$(find_python)" || die "Python 3.11+ not found"
+  "$py" -m unittest discover -s "$ROOT/tests" "$@"
+}
+
+cmd_query() {  # Ask the running (or D-Bus activated) provider, like GNOME Shell would.
+  local terms
+  terms="$(printf "'%s'," "$@")"
+  gdbus call --session --dest "$APP_ID" --object-path "$OBJECT_PATH" \
+    --method org.gnome.Shell.SearchProvider2.GetInitialResultSet "[${terms%,}]"
+}
+
+cmd_open() {
+  local url=""
+  if [[ -r "$LLM_SEARCH_HOME/config/agents.toml" ]]; then
+    url="$(sed -n 's/^[[:space:]]*chat_url[[:space:]]*=[[:space:]]*"\([^"?]*\).*/\1/p' \
+      "$LLM_SEARCH_HOME/config/agents.toml" | head -1)"
+  fi
+  xdg-open "${url:-claude://claude.ai/new}" >/dev/null 2>&1 &
+}
+
+usage() {
+  cat <<EOF
+llm-search: GNOME search provider for LLMs and agents
+
+Usage: llm-search <command> [options]
+
+  install [--copy] [--dry-run] [--category-name NAME]
+        Create the config home, then link the provider into GNOME and D-Bus.
+        --copy installs a copy of the code to $COPY_DIR instead of running from this checkout.
+  uninstall [--purge] [--dry-run]
+        Remove the links; --purge also deletes the config home.
+  status                Show what is installed and whether the provider is running.
+  query WORDS...        Run a search through D-Bus, like GNOME Shell does.
+  test                  Run the unit tests.
+  open                  Open the chat UI (or Claude Desktop).
+
+Config home: \$LLM_SEARCH_HOME (currently $LLM_SEARCH_HOME)
+EOF
+}
+
+case "${1:-help}" in
+  install)   shift; cmd_install "$@" ;;
+  uninstall) shift; cmd_uninstall "$@" ;;
+  status)    shift; cmd_status ;;
+  query)     shift; cmd_query "$@" ;;
+  test)      shift; cmd_test "$@" ;;
+  open)      shift; cmd_open ;;
+  help|-h|--help) usage ;;
+  *) usage; exit 2 ;;
+esac

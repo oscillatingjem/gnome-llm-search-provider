@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=@CATEGORY@
+Comment=Send prompts from GNOME search to LLMs and agents
+Icon=io.github.oscillatingjem.LlmSearchProvider
+Exec=@BIN@ open
+Categories=Utility;
+Keywords=AI;LLM;Agent;Chat;Prompt;
+StartupNotify=false

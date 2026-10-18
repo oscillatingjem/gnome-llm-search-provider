@@ -1,0 +1,82 @@
+# llm-search: app agents, aliases and ranking rules.
+# Lives in $LLM_SEARCH_HOME/config/agents.toml (default ~/.llm-search/config/agents.toml).
+# Changes apply the next time the provider starts (it exits after 60 s idle).
+
+[search]
+min_chars = 3        # shorter queries show no rows
+max_rows = 5         # GNOME shows about five rows per category
+
+# --- App agents ---------------------------------------------------------------
+# Opened through a URL. Placeholders: {prompt} {model} {effort} (URL-encoded).
+# Query parameters left empty are dropped, so optional params are safe to include.
+
+[[app]]
+id = "claude-chat"
+name = "Ask Claude"
+url = "claude://claude.ai/new?q={prompt}"
+icon = "claude-desktop"
+tags = ["writing", "reasoning", "general"]
+priority = 1.0
+
+# Claude Desktop links accept a prompt (q) and, for Code, one or more folders
+# (&folder=/abs/path), but no model or effort: those come from the app's own settings.
+# For apps whose links do accept them, list `models` and `efforts` and use
+# {model} / {effort} in the url.
+[[app]]
+id = "claude-code"
+name = "Claude Code"
+url = "claude://code/new?q={prompt}"
+icon = "claude-desktop"
+tags = ["coding", "agent"]
+
+# --- Aliases --------------------------------------------------------------------
+# @name → "<app id>[:<model>]" or "<gateway model>". Prefix matches of ids,
+# names and model names also work without an alias.
+[aliases]
+claude = "claude-chat"
+code = "claude-code"
+
+# --- Gateway (optional) ---------------------------------------------------------
+# Uncomment once a LiteLLM proxy is running (see docs/PROVIDERS.md).
+# [gateway]
+# url = "http://127.0.0.1:4000"
+# key_env = "LITELLM_MASTER_KEY"           # read from secrets.env
+# chat_url = "http://127.0.0.1:3000/?models={model}&q={prompt}"
+# auto_model = "smart-router"
+
+# --- Ranking --------------------------------------------------------------------
+# Each rule adds `weight` to candidates carrying `tag` when a pattern matches.
+[routing]
+low_effort_max_words = 8
+high_effort_patterns = [
+  '\b(why|design|architect\w*|debug\w*|compare|trade-?offs?|plan|prove|step by step|analy[sz]e)\b',
+]
+
+[[routing.rule]]
+tag = "coding"
+weight = 3
+patterns = [
+  '\b(code|function|class|bug|regex|script|refactor|compile|stack ?trace|traceback|exception|git|bash|python|javascript|typescript|rust|golang|sql|api|unit tests?)\b',
+  '```',
+  '\w+\(\)',
+]
+
+[[routing.rule]]
+tag = "writing"
+weight = 2
+patterns = ['\b(write|draft|email|rewrite|summari[sz]e|proofread|tone|essay|letter|post)\b']
+
+[[routing.rule]]
+tag = "reasoning"
+weight = 2
+patterns = ['\b(why|explain|compare|plan|decide|pros and cons|trade-?offs?)\b']
+
+[[routing.rule]]
+tag = "private"
+weight = 4
+patterns = ['\b(private|confidential|offline|local only|password|medical|salary)\b']
+
+[[routing.rule]]
+tag = "fast"
+weight = 1
+patterns = ['^\S+(\s+\S+){0,5}\??$']   # very short questions

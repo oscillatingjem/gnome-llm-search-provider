@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+# user config never belongs in the repo
+secrets.env
+.llm-search/
