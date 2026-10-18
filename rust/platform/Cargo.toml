@@ -1,0 +1,21 @@
+[package]
+name = "agent-search-platform"
+description = "GLib side of Agent Search: D-Bus calls, launching, clipboard, gateway HTTP, shortcut"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "agent_search_platform"
+
+[dependencies]
+agent-search-core.workspace = true
+glib.workspace = true
+gio.workspace = true
+soup3.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+
+[lints]
+workspace = true

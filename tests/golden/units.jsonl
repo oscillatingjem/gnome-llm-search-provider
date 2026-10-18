@@ -1,0 +1,133 @@
+{"kind": "suggest_effort", "in": "", "out": "low"}
+{"kind": "suggest_effort", "in": "   ", "out": "low"}
+{"kind": "suggest_effort", "in": "hi", "out": "low"}
+{"kind": "suggest_effort", "in": "fix", "out": "low"}
+{"kind": "suggest_effort", "in": "fix this python traceback in my script", "out": "low"}
+{"kind": "suggest_effort", "in": "what should I cook tonight", "out": "low"}
+{"kind": "suggest_effort", "in": "@opus refactor the snapshot script", "out": "low"}
+{"kind": "suggest_effort", "in": "@son summarize this", "out": "low"}
+{"kind": "suggest_effort", "in": "@code what is a closure", "out": "low"}
+{"kind": "suggest_effort", "in": "!high fix this bug", "out": "low"}
+{"kind": "suggest_effort", "in": "!low capital of peru", "out": "low"}
+{"kind": "suggest_effort", "in": "!max compare these designs", "out": "high"}
+{"kind": "suggest_effort", "in": "why does my btrfs balance keep failing on this disk", "out": "high"}
+{"kind": "suggest_effort", "in": "explain btrfs snapshots", "out": "low"}
+{"kind": "suggest_effort", "in": "@coder explain this regex", "out": "low"}
+{"kind": "suggest_effort", "in": "email bob@example.com now", "out": "low"}
+{"kind": "suggest_effort", "in": "wow! !nope", "out": "low"}
+{"kind": "suggest_effort", "in": "@ alone", "out": "low"}
+{"kind": "suggest_effort", "in": "!x", "out": "low"}
+{"kind": "suggest_effort", "in": "@opus", "out": "low"}
+{"kind": "suggest_effort", "in": "!high", "out": "low"}
+{"kind": "suggest_effort", "in": "@opus !high", "out": "low"}
+{"kind": "suggest_effort", "in": "a; rm -rf ~ {model} $(x) %s %(x)s", "out": "low"}
+{"kind": "suggest_effort", "in": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word", "out": "high"}
+{"kind": "suggest_effort", "in": "Ünïcödé prompt with ümlauts and 日本語", "out": "low"}
+{"kind": "suggest_effort", "in": "trailing spaces   ", "out": "low"}
+{"kind": "suggest_effort", "in": "tabs\tin\tterms", "out": "low"}
+{"kind": "suggest_effort", "in": "fix", "out": "low"}
+{"kind": "suggest_effort", "in": "fix this python", "out": "low"}
+{"kind": "suggest_effort", "in": "fix this python traceback why does my btrfs", "out": "high"}
+{"kind": "suggest_effort", "in": "fix this python traceback why does my btrfs balance", "out": "high"}
+{"kind": "suggest_effort", "in": "fix this python traceback why does my btrfs balance fail write an email to bob@example.com capital of peru compare designs regex main() ``` private salary Éclair über naïve 日本語 wow! a hi ok?", "out": "high"}
+{"kind": "suggest_effort", "in": "this", "out": "low"}
+{"kind": "suggest_effort", "in": "this python traceback", "out": "low"}
+{"kind": "suggest_effort", "in": "this python traceback why does my btrfs balance", "out": "high"}
+{"kind": "suggest_effort", "in": "this python traceback why does my btrfs balance fail", "out": "high"}
+{"kind": "suggest_effort", "in": "this python traceback why does my btrfs balance fail write an email to bob@example.com capital of peru compare designs regex main() ``` private salary Éclair über naïve 日本語 wow! a hi ok?", "out": "high"}
+{"kind": "suggest_effort", "in": "python", "out": "low"}
+{"kind": "suggest_effort", "in": "python traceback why", "out": "high"}
+{"kind": "suggest_effort", "in": "python traceback why does my btrfs balance fail", "out": "high"}
+{"kind": "suggest_effort", "in": "python traceback why does my btrfs balance fail write", "out": "high"}
+{"kind": "suggest_effort", "in": "python traceback why does my btrfs balance fail write an email to bob@example.com capital of peru compare designs regex main() ``` private salary Éclair über naïve 日本語 wow! a hi ok?", "out": "high"}
+{"kind": "suggest_effort", "in": "traceback", "out": "low"}
+{"kind": "suggest_effort", "in": "traceback why does", "out": "high"}
+{"kind": "suggest_effort", "in": "traceback why does my btrfs balance fail write", "out": "high"}
+{"kind": "suggest_effort", "in": "traceback why does my btrfs balance fail write an", "out": "high"}
+{"kind": "suggest_effort", "in": "traceback why does my btrfs balance fail write an email to bob@example.com capital of peru compare designs regex main() ``` private salary Éclair über naïve 日本語 wow! a hi ok?", "out": "high"}
+{"kind": "suggest_effort", "in": "why", "out": "high"}
+{"kind": "suggest_effort", "in": "why does my", "out": "high"}
+{"kind": "suggest_effort", "in": "why does my btrfs balance fail write an", "out": "high"}
+{"kind": "suggest_effort", "in": "why does my btrfs balance fail write an email", "out": "high"}
+{"kind": "suggest_effort", "in": "why does my btrfs balance fail write an email to bob@example.com capital of peru compare designs regex main() ``` private salary Éclair über naïve 日本語 wow! a hi ok?", "out": "high"}
+{"kind": "suggest_effort", "in": "does", "out": "low"}
+{"kind": "suggest_effort", "in": "does my btrfs", "out": "low"}
+{"kind": "suggest_effort", "in": "does my btrfs balance fail write an email", "out": "low"}
+{"kind": "suggest_effort", "in": "does my btrfs balance fail write an email to", "out": "medium"}
+{"kind": "suggest_effort", "in": "does my btrfs balance fail write an email to bob@example.com capital of peru compare designs regex main() ``` private salary Éclair über naïve 日本語 wow! a hi ok?", "out": "high"}
+{"kind": "suggest_effort", "in": "my", "out": "low"}
+{"kind": "suggest_effort", "in": "my btrfs balance", "out": "low"}
+{"kind": "suggest_effort", "in": "my btrfs balance fail write an email to", "out": "low"}
+{"kind": "suggest_effort", "in": "my btrfs balance fail write an email to bob@example.com", "out": "medium"}
+{"kind": "suggest_effort", "in": "my btrfs balance fail write an email to bob@example.com capital of peru compare designs regex main() ``` private salary Éclair über naïve 日本語 wow! a hi ok?", "out": "high"}
+{"kind": "suggest_effort", "in": "btrfs", "out": "low"}
+{"kind": "suggest_effort", "in": "btrfs balance fail", "out": "low"}
+{"kind": "suggest_effort", "in": "btrfs balance fail write an email to bob@example.com", "out": "low"}
+{"kind": "suggest_effort", "in": "btrfs balance fail write an email to bob@example.com capital", "out": "medium"}
+{"kind": "suggest_effort", "in": "btrfs balance fail write an email to bob@example.com capital of peru compare designs regex main() ``` private salary Éclair über naïve 日本語 wow! a hi ok?", "out": "high"}
+{"kind": "suggest_effort", "in": "balance", "out": "low"}
+{"kind": "suggest_effort", "in": "balance fail write", "out": "low"}
+{"kind": "suggest_effort", "in": "balance fail write an email to bob@example.com capital", "out": "low"}
+{"kind": "suggest_effort", "in": "balance fail write an email to bob@example.com capital of", "out": "medium"}
+{"kind": "suggest_effort", "in": "balance fail write an email to bob@example.com capital of peru compare designs regex main() ``` private salary Éclair über naïve 日本語 wow! a hi ok?", "out": "high"}
+{"kind": "suggest_effort", "in": "fail", "out": "low"}
+{"kind": "suggest_effort", "in": "fail write an", "out": "low"}
+{"kind": "suggest_effort", "in": "fail write an email to bob@example.com capital of", "out": "low"}
+{"kind": "suggest_effort", "in": "fail write an email to bob@example.com capital of peru", "out": "medium"}
+{"kind": "suggest_effort", "in": "fail write an email to bob@example.com capital of peru compare designs regex main() ``` private salary Éclair über naïve 日本語 wow! a hi ok?", "out": "high"}
+{"kind": "clamp_effort", "in": [null, []], "out": null}
+{"kind": "clamp_effort", "in": [null, ["low"]], "out": null}
+{"kind": "clamp_effort", "in": [null, ["high"]], "out": null}
+{"kind": "clamp_effort", "in": [null, ["low", "high"]], "out": null}
+{"kind": "clamp_effort", "in": [null, ["medium"]], "out": null}
+{"kind": "clamp_effort", "in": [null, ["low", "medium", "high", "xhigh", "max"]], "out": null}
+{"kind": "clamp_effort", "in": ["low", []], "out": null}
+{"kind": "clamp_effort", "in": ["low", ["low"]], "out": "low"}
+{"kind": "clamp_effort", "in": ["low", ["high"]], "out": "high"}
+{"kind": "clamp_effort", "in": ["low", ["low", "high"]], "out": "low"}
+{"kind": "clamp_effort", "in": ["low", ["medium"]], "out": "medium"}
+{"kind": "clamp_effort", "in": ["low", ["low", "medium", "high", "xhigh", "max"]], "out": "low"}
+{"kind": "clamp_effort", "in": ["medium", []], "out": null}
+{"kind": "clamp_effort", "in": ["medium", ["low"]], "out": "low"}
+{"kind": "clamp_effort", "in": ["medium", ["high"]], "out": "high"}
+{"kind": "clamp_effort", "in": ["medium", ["low", "high"]], "out": "low"}
+{"kind": "clamp_effort", "in": ["medium", ["medium"]], "out": "medium"}
+{"kind": "clamp_effort", "in": ["medium", ["low", "medium", "high", "xhigh", "max"]], "out": "medium"}
+{"kind": "clamp_effort", "in": ["high", []], "out": null}
+{"kind": "clamp_effort", "in": ["high", ["low"]], "out": "low"}
+{"kind": "clamp_effort", "in": ["high", ["high"]], "out": "high"}
+{"kind": "clamp_effort", "in": ["high", ["low", "high"]], "out": "high"}
+{"kind": "clamp_effort", "in": ["high", ["medium"]], "out": "medium"}
+{"kind": "clamp_effort", "in": ["high", ["low", "medium", "high", "xhigh", "max"]], "out": "high"}
+{"kind": "clamp_effort", "in": ["xhigh", []], "out": null}
+{"kind": "clamp_effort", "in": ["xhigh", ["low"]], "out": "low"}
+{"kind": "clamp_effort", "in": ["xhigh", ["high"]], "out": "high"}
+{"kind": "clamp_effort", "in": ["xhigh", ["low", "high"]], "out": "high"}
+{"kind": "clamp_effort", "in": ["xhigh", ["medium"]], "out": "medium"}
+{"kind": "clamp_effort", "in": ["xhigh", ["low", "medium", "high", "xhigh", "max"]], "out": "xhigh"}
+{"kind": "clamp_effort", "in": ["max", []], "out": null}
+{"kind": "clamp_effort", "in": ["max", ["low"]], "out": "low"}
+{"kind": "clamp_effort", "in": ["max", ["high"]], "out": "high"}
+{"kind": "clamp_effort", "in": ["max", ["low", "high"]], "out": "high"}
+{"kind": "clamp_effort", "in": ["max", ["medium"]], "out": "medium"}
+{"kind": "clamp_effort", "in": ["max", ["low", "medium", "high", "xhigh", "max"]], "out": "max"}
+{"kind": "fill_url", "in": ["x://new?q={prompt}&model={model}&effort={effort}", {"prompt": "hi", "model": "opus", "effort": null}], "out": "x://new?q=hi&model=opus"}
+{"kind": "fill_url", "in": ["claude://claude.ai/new?q={prompt}", {"prompt": "hello & goodbye? 100% #1 ü/日"}], "out": "claude://claude.ai/new?q=hello%20%26%20goodbye%3F%20100%25%20%231%20%C3%BC%2F%E6%97%A5"}
+{"kind": "fill_url", "in": ["x://{prompt}", {"prompt": "a b/c"}], "out": "x://a%20b%2Fc"}
+{"kind": "fill_url", "in": ["http://h/?models={model}&q={prompt}", {"model": "big@high", "prompt": "q=1&r=2"}], "out": "http://h/?models=big%40high&q=q%3D1%26r%3D2"}
+{"kind": "fill_url", "in": ["x://new?a=&b={prompt}&c=keep", {"prompt": ""}], "out": "x://new?c=keep"}
+{"kind": "fill_command", "in": [["term", "--", "claude", ["--model", "{model}"], ["--effort", "{effort}"], "--", "{prompt}"], {"prompt": "fix it", "model": "opus", "effort": "high"}], "out": ["term", "--", "claude", "--model", "opus", "--effort", "high", "--", "fix it"]}
+{"kind": "fill_command", "in": [["term", "--", "claude", ["--model", "{model}"], ["--effort", "{effort}"], "--", "{prompt}"], {"prompt": "fix it", "model": null, "effort": null}], "out": ["term", "--", "claude", "--", "fix it"]}
+{"kind": "fill_command", "in": [["term", "--", "claude", ["--model", "{model}"], ["--effort", "{effort}"], "--", "{prompt}"], {"prompt": "a; rm -rf ~ {model} $(x)", "model": "m", "effort": null}], "out": ["term", "--", "claude", "--model", "m", "--", "a; rm -rf ~ {model} $(x)"]}
+{"kind": "fill_command", "in": [["term", "--", "claude", ["--model", "{model}"], ["--effort", "{effort}"], "--", "{prompt}"], {"prompt": "", "model": "m", "effort": "low"}], "out": ["term", "--", "claude", "--model", "m", "--effort", "low", "--"]}
+{"kind": "parse_result_id", "in": "app:a||", "out": ["app:a", null, null]}
+{"kind": "parse_result_id", "in": "app:a|m|e|k", "out": ["app:a", "m", "e"]}
+{"kind": "parse_result_id", "in": "model:big|high", "out": ["model:big", "high", null]}
+{"kind": "parse_result_id", "in": "auto", "out": ["auto", null, null]}
+{"kind": "parse_result_id", "in": "x|y|z|w|v", "out": ["x", "y", "z"]}
+{"kind": "parse_result_id", "in": "", "out": ["", null, null]}
+{"kind": "query_key", "in": "foo", "out": "48726cc7f5c5"}
+{"kind": "query_key", "in": "foo bar", "out": "9291f8529f98"}
+{"kind": "query_key", "in": "", "out": "2944a91f9844"}
+{"kind": "query_key", "in": "@opus !high x", "out": "69e6e3fcdd84"}
+{"kind": "models_from_info", "in": [{"model_name": "smart-router", "model_info": {"display_name": "Auto"}}, {"model_name": "coder", "model_info": {"display_name": "Qwen Coder", "tags": ["coding", "private"], "aliases": ["Coder", "qwen"]}}, {"model_name": "big@low", "model_info": {"base": "big", "effort": "low", "display_name": "Big", "tags": ["reasoning"]}}, {"model_name": "big@high", "model_info": {"base": "big", "effort": "high"}}, {"model_name": "plain"}], "out": [{"id": "auto", "kind": "auto", "name": "Auto", "tags": [], "efforts": [], "models": [], "aliases": [], "icon": "emblem-system-symbolic", "priority": 0.0}, {"id": "model:coder", "kind": "model", "name": "Qwen Coder", "tags": ["coding", "private"], "efforts": [], "models": [], "aliases": ["coder", "qwen"], "icon": "user-available-symbolic", "priority": 0.0}, {"id": "model:big", "kind": "model", "name": "Big", "tags": ["reasoning"], "efforts": ["low", "high"], "models": [], "aliases": [], "icon": "user-available-symbolic", "priority": 0.0}, {"id": "model:plain", "kind": "model", "name": "plain", "tags": [], "efforts": [], "models": [], "aliases": [], "icon": "user-available-symbolic", "priority": 0.0}]}

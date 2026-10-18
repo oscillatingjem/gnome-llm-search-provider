@@ -1,0 +1,22 @@
+[package]
+name = "agent-search"
+description = "Agent Search prompt box and settings window (GTK 4 / libadwaita)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "agent-search"
+path = "src/main.rs"
+
+[dependencies]
+agent-search-core.workspace = true
+agent-search-platform.workspace = true
+glib.workspace = true
+gio.workspace = true
+gtk4.workspace = true
+libadwaita.workspace = true
+
+[lints]
+workspace = true

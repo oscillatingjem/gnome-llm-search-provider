@@ -1,0 +1,20 @@
+[package]
+name = "agent-search-core"
+description = "Query parsing, ranking, config and editing for Agent Search (no GTK)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "agent_search_core"
+
+[dependencies]
+blake2 = "0.10"
+fancy-regex = "0.19"
+regex = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+toml = { version = "1", features = ["preserve_order"] }
+
+[lints]
+workspace = true

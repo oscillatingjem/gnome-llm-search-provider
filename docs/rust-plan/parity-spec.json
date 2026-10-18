@@ -1,0 +1,1352 @@
+{
+ "specCore": {
+  "area": "Core logic parity spec (query parsing, effort, ranking, result ids, alias resolution, gateway catalog, URL and command templating, activation, config/secrets loading and writing, signature/reload, legacy migration, restore_defaults, comment-preserving TOML editor) for the Rust rewrite of Agent Search 0.5.0. I read every file named in the task in full, plus provider.py, prompt.py, prefs.py, shortcut.py, __init__.py, docs/CONFIGURATION.md and docs/PROVIDERS.md for callers and contracts. I checked every non-obvious claim below by running the code under Python 3.14.8 (Unicode 16.0.0) on a scratch copy at /tmp/claude-1000/-home-jem--config-Claude-scratch-workspaces-63916be0-91be-4159-8336-ddb5c5f4d763-fc68f1ac-4d0d-4c00-a3ab-97c796438bed-scratch-2026-10-18-33b1ec/c1eb6717-9f7c-4ece-a251-91a4d26833d4/scratchpad/copy, which passes all 35 tests. No project files were modified. Source paths are relative to /home/jem/Projects/git/github/oscillatingjem/gnome-llm-search-provider/src/llm_search/.",
+  "behaviors": [
+   {
+    "id": "Q-01",
+    "behavior": "parse(terms) walks the terms in order. The first term with len>1 that starts with '@' (while no model is set yet) sets model = term[1:].lower(). Otherwise, the first term with len>1 that starts with '!', whose term[1:].lower() is a key of EFFORT_ALIASES (while no effort is set yet), sets effort = EFFORT_ALIASES[...]. Every other term goes to words. prompt = ' '.join(words).strip(). Query is a frozen value with fields prompt, model and effort. Equality is structural.",
+    "source": "query.py:22-44",
+    "edge_cases": "'@' alone and '!' alone stay in the prompt. '@@x' gives model '@x'. Only the first @ token and the first valid ! token are consumed; later ones stay in the prompt ('@a @b hi' gives prompt '@b hi'; '!X !h a' gives effort max and prompt '!h a'). '!e' and '!nope' stay in the prompt; 'wow!' stays; 'bob@example.com' stays. '@x!h' gives model 'x!h'. '!XH' gives xhigh, because the match is case-insensitive. '@ÉCOLE' gives 'école'. '@İx' gives 'i̇x', 3 code points, because of the full lowercase mapping. Terms are not re-split, so a term with inner whitespace or '\\n' keeps it ('a\\n','b ' gives 'a\\n b'). strip() only trims the ends, using Python whitespace. len>1 counts code points, but this is equivalent to a byte-length check for a leading ASCII '@' or '!'. Query.is_empty exists but is unused.",
+    "covered_by_test": "ParseTests.test_cases; CommandTests.test_xhigh_effort_parses"
+   },
+   {
+    "id": "Q-02",
+    "behavior": "Where terms come from: GNOME Shell passes them already split. The prompt box (refresh/run) splits entry text with Python str.split(). ActivateResult re-parses the terms it receives, so the prompt sent is the activation-time prompt. LaunchSearch joins the terms with ' ' and calls org.freedesktop.Application.ActivateAction('search', [<s>], {}) on the prompt-box app.",
+    "source": "prompt.py:74,93; provider.py:61-67,86-94",
+    "edge_cases": "str.split() with no arguments splits on every str.isspace() char. That includes \\x1c-\\x1f, \\x85, \\xa0 and  , but not ​. Verified: 'a\\x1cb\\x1fc\\xa0d e​f\\x85g' gives ['a','b','c','d','e​f','g']. Rust split_whitespace() does NOT split on \\x1c-\\x1f.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "E-01",
+    "behavior": "EFFORTS = (low, medium, high, xhigh, max), in this order. EFFORT_ALIASES is exactly: l, lo, low → low; m, med, medium → medium; h, hi, high → high; xh, xhigh → xhigh; x, max → max.",
+    "source": "query.py:11-19",
+    "edge_cases": "These have no alias: 'mid', 'xhi', 'mx', 'hig'. The match runs on the lowercased token.",
+    "covered_by_test": "ParseTests.test_cases; CommandTests.test_xhigh_effort_parses"
+   },
+   {
+    "id": "E-02",
+    "behavior": "suggest_effort(prompt): returns 'high' if any high_effort_patterns entry matches, using re.search(p, prompt, re.IGNORECASE) evaluated in list order with short-circuit. Otherwise it counts words = len(prompt.split()) and returns 'low' if words <= low_effort_max_words, 'high' if words > 60, and 'medium' otherwise. It is called only when the query has no explicit !effort, so the patterns are not even compiled in that case.",
+    "source": "ranker.py:68-74, 121",
+    "edge_cases": "It never suggests xhigh or max. With 8 words and the default 8 → low; 9 → medium; 60 → medium; 61 → high. 'Why not' → high (pattern). If low_effort_max_words > 60, long prompts still come out low until they pass that count. An invalid pattern raises re.error at search time, but only when the patterns are evaluated.",
+    "covered_by_test": "RankTests.test_effort_suggested"
+   },
+   {
+    "id": "E-03",
+    "behavior": "clamp_effort(effort, supported): returns None if effort is falsy or supported is empty. Returns effort if it is in supported. Otherwise returns min(supported, key=|EFFORTS.index(e) - EFFORTS.index(effort)|), where a name not in EFFORTS gets key 99. Ties go to the FIRST element in supported list order (Python min).",
+    "source": "ranker.py:77-84",
+    "edge_cases": "Verified: medium on [low,high] → low; medium on [high,low] → high; max on [low,high] → high; low on ['turbo'] → 'turbo'; xhigh on ['turbo','max'] → max. Effort names in supported are not validated; gateway variants such as 'minimal' pass through. The requested effort is always a valid EFFORTS member, so EFFORTS.index never raises.",
+    "covered_by_test": "RankTests.test_effort_forced_and_clamped; RankTests.test_apps_without_efforts_show_none; RankTests.test_models_without_efforts_show_none"
+   },
+   {
+    "id": "R-01",
+    "behavior": "rank() returns [] when len(query.prompt) < config.min_chars. len counts Unicode code points, so a Rust port must use chars().count(), not len(). @ and ! tokens are already removed from the prompt.",
+    "source": "ranker.py:117-119",
+    "edge_cases": "'éé' with min_chars 3 → no rows; 'a b' → 3 chars → rows. A float min_chars (2.5) works in Python. With min_chars <= 0, an empty prompt still ranks.",
+    "covered_by_test": "RankTests.test_short_or_token_only_queries_show_nothing"
+   },
+   {
+    "id": "R-02",
+    "behavior": "matched_tags(prompt): for each [[routing.rule]] in file order, if any pattern matches (re.search, IGNORECASE, short-circuit), then weights[tag] = weights.get(tag, 0.0) + rule.weight. The result is ordered by insertion, i.e. by the first matching rule for each tag. Several rules with the same tag add up.",
+    "source": "ranker.py:87-92",
+    "edge_cases": "An integer weight 3 accumulates as 3.0. Because of the short-circuit, an invalid pattern placed after a matching one in the same rule never raises for prompts that match the earlier pattern (verified: patterns ['\\\\bcode\\\\b','('] raise only for prompts without 'code'). If patterns is a string instead of a list, Python iterates its characters, each one a regex. Example 'fast' rule '^\\S+(\\s+\\S+){0,5}\\??$': 6 words match, 7 do not.",
+    "covered_by_test": "RankTests.test_coding_prompt_puts_claude_code_first (indirect)"
+   },
+   {
+    "id": "R-03",
+    "behavior": "score(c) = c.priority + sum(w for tag, w in tags if tag in c.tags). Row.reasons = [t for t in tags (insertion order) if t in c.tags].",
+    "source": "ranker.py:128,136-137",
+    "edge_cases": "'in' on a list is membership. If tags were a TOML string, it becomes a SUBSTRING test (tags='coding' matches rule tag 'cod'; verified). NaN priority leaves Python's sort effectively unsorted (verified: [1, nan, 2, 0.5] stays in input order).",
+    "covered_by_test": "RankTests.test_coding_prompt_puts_claude_code_first; RankTests.test_general_prompt_puts_ask_claude_first"
+   },
+   {
+    "id": "R-04",
+    "behavior": "Row selection: (1) If query.model is set and resolve() hits, the hit becomes row 1, built with the resolved model. (2) ranked = stable sort of the non-AUTO candidates by score, descending. Ties keep candidate-list order: gateway models in /model/info order, then apps in agents.toml order. auto = the AUTO candidates. For c in auto + ranked: break if len(rows) >= max_rows; skip c if a row with the same candidate.id already exists; otherwise append make_row(c) with model None. (3) best_app = the first APP in ranked. If it exists and no row has kind APP, rows[-1:] = [make_row(best_app)]: it replaces the last row, or appends when rows is empty.",
+    "source": "ranker.py:130-152",
+    "edge_cases": "The @ row counts toward max_rows. A candidate appears only once, even with another model. With max_rows == 1, an @ hit on a gateway model or Auto is REPLACED by the best app (verified: '@coder explain this regex' with max_rows 1 → app:claude-cli). max_rows <= 0 still returns 1 row (verified for 0 and -1). The Auto row always comes right after the @ row, otherwise first. Rust: use sort_by with b.partial_cmp(a) (stable) and decide what NaN does.",
+    "covered_by_test": "RankTests.test_gateway_rows_include_auto_first; RankTests.test_best_app_always_present; RankTests.test_alias_with_model"
+   },
+   {
+    "id": "R-05",
+    "behavior": "make_row(c, model=None) builds Row(candidate=c, model=model, effort=clamp_effort(query.effort or suggested, c.efforts), reasons, query_key). With no @model, app agents keep their own default model (None). The Auto candidate has no efforts, so its effort is None.",
+    "source": "ranker.py:121-128",
+    "edge_cases": "The suggested effort is computed once per query and clamped per candidate. Apps without efforts get None even when the effort is explicit ('!high fix this bug').",
+    "covered_by_test": "RankTests.test_apps_without_efforts_show_none; RankTests.test_effort_forced_and_clamped"
+   },
+   {
+    "id": "R-06",
+    "behavior": "Row.title = candidate.name, plus ' · ' + model.capitalize() when model is set. Row.subtitle joins with ' · ' (space, U+00B7, space): f'{effort} effort' if effort, and ', '.join(reasons) if reasons. It is '' when neither is present. The provider meta description is '“' + prompt + '”' (U+201C/U+201D), plus ' · ' + subtitle when the subtitle is non-empty.",
+    "source": "ranker.py:41-55; provider.py:69-84",
+    "edge_cases": "Python str.capitalize titlecases the first character and LOWERCASES THE REST. Verified: 'GPT'→'Gpt', 'gpt-4o'→'Gpt-4o', 'ǆx'→'ǅx', 'ßa'→'Ssa', 'ﬁx'→'Fix', 'ŉa'→'ʼNa'. Rust std has no titlecase: char::to_uppercase('ß') = 'SS'. Example vectors: 'Claude Code (terminal) · Sonnet' / 'low effort'; 'Claude Code (terminal)' / 'max effort · coding'.",
+    "covered_by_test": "RankTests.test_alias_with_model"
+   },
+   {
+    "id": "ID-01",
+    "behavior": "result_id = f'{cid}|{model or \"\"}|{effort or \"\"}|{query_key}'. cid is 'app:<id>', 'model:<base>' or 'auto'. query_key = blake2s(utf8(f'{query.model or \"\"}\\0{query.effort or \"\"}\\0{query.prompt}'), digest_size=6).hexdigest(), giving 12 lowercase hex chars. It uses the RAW @text and the EXPLICIT effort only, not the resolved or suggested values.",
+    "source": "ranker.py:35-39,58-60",
+    "edge_cases": "BLAKE2s with digest length 6 is a parameter-block setting, NOT a 32-byte digest truncated. Use blake2::Blake2s<U6> or blake2s_simd Params::hash_length(6). Vectors: Query('hello world') → 9ecaf2f6a8bf; Query('refactor this','opus','high') → edf172736af7; Query('héllo ☃') → 9a1b0be70529; parse('what should I cook tonight') → bc4896089f88; parse('@cli !x refactor the backup script') → 1f39459664cb; parse('@son write an email to bob') → 013484655309. Ids only need to be stable within one process and change with the query (GNOME caches metas by id), but matching hashes makes golden tests portable.",
+    "covered_by_test": "RankTests.test_result_ids_change_with_the_query; RankTests.test_result_id_round_trip"
+   },
+   {
+    "id": "ID-02",
+    "behavior": "parse_result_id(rid): (rid.split('|') + ['', ''])[:3] gives (cid, model or None, effort or None). The query key is ignored.",
+    "source": "ranker.py:63-65",
+    "edge_cases": "'auto' → ('auto',None,None); '' → ('',None,None); 'model:a|b|c|d|e' → ('model:a','b','c'). A '|' inside an app id, gateway base or model name silently corrupts the parse.",
+    "covered_by_test": "RankTests.test_result_id_round_trip"
+   },
+   {
+    "id": "A-01",
+    "behavior": "resolve(name, candidates) runs in this order. (1) target = config.aliases.get(name), an exact key lookup. If target is truthy: cid, _, model = target.partition(':') (FIRST colon); return (c, model or None) for the first candidate whose id is cid, 'app:'+cid or 'model:'+cid. If none matches, fall through using the original name. (2) Exact: the first c where name is in [c.id.split(':',1)[-1], c.name.lower(), *c.aliases] → (c, None). (3) App model prefix: the first APP c with any m in c.models where m.startswith(name) → (c, the first such m in models order). (4) Prefix: the first c where any of the step-2 keys startswith(name) → (c, None). (5) None. Candidate order is gateway models (including Auto, in /model/info order) followed by apps in file order.",
+    "source": "ranker.py:95-114; catalog.py:81-82",
+    "edge_cases": "Verified: '@son' → claude-cli + sonnet; '@fab' → claude-cli + fable; '@code' → alias → claude-code; '@claude-c' and '@cl' → claude-chat (first in order); '@ask' → claude-chat (name prefix); '@s' → claude-cli/sonnet, because step 3 runs before step 4; '@b' → model:big. Alias 'y'='claude-cli:opus' → claude-cli/opus. 'z'='auto' → Auto. 'w'='big:foo' → model:big with model 'foo' (title 'Big · Foo'; the URL ignores it). 'x'='app:claude-cli' → cid 'app' → no match (bug). Alias targets pointing at hidden apps fall through. [aliases] KEYS are never prefix-matched. App ids, gateway bases and app models are compared case-sensitively against the lowercased name. App candidates have no aliases; only gateway models carry model_info.aliases (lowercased).",
+    "covered_by_test": "RankTests.test_alias_with_model; RankTests.test_model_prefix_without_alias; RankTests.test_app_alias; RankTests.test_models_without_efforts_show_none"
+   },
+   {
+    "id": "G-01",
+    "behavior": "app_candidates(config): for each a in config.apps in file order, when a.enabled is truthy AND every entry in a.requires resolves via which(), build Candidate(id='app:'+a.id, kind='app', name, tags, efforts, models, icon, priority). The candidate has no aliases.",
+    "source": "catalog.py:16-21; launch.py:37-38",
+    "edge_cases": "Empty requires means available. Python truthiness: enabled=0 or '' hides the row; enabled='false' (a string) SHOWS it. Lists are shared by reference with App.",
+    "covered_by_test": "CommandTests.test_missing_requirement_hides_app; CommandTests.test_cli_row_hidden_without_claude; SettingsTests.test_edits_apply_and_keep_every_comment"
+   },
+   {
+    "id": "G-02",
+    "behavior": "models_from_info(data, auto_model): for each entry, name = entry.get('model_name','') and info = entry.get('model_info') or {}. If name == auto_model: by_base[name] = Candidate(id='auto', kind='auto', name=info.get('display_name','Auto'), tags=info.get('tags',[]), icon='emblem-system-symbolic'), then continue. Otherwise base = info.get('base') or name. The FIRST entry for a base creates Candidate(id='model:'+base, kind='model', name=info.get('display_name', base), tags=info.get('tags',[]), aliases=[a.lower() for a in info.get('aliases',[])], icon=info.get('icon','user-available-symbolic'), priority=info.get('priority',0.0)). Every entry for the base, the first included, appends info['effort'] to efforts if it is truthy and not already present. Output order is dict insertion order of first appearance; an overwrite keeps the original position.",
+    "source": "catalog.py:24-43",
+    "edge_cases": "Verified: a later entry with base == auto_model adds its effort to the Auto candidate. A missing model_name gives id 'model:'. display_name: null gives name None, because the .get default applies only to MISSING keys. tags: null makes the later 'in' raise TypeError. Unknown effort strings ('minimal') are kept. Integer priority stays an integer. The first entry decides display_name, tags, aliases, icon and priority; later entries only add efforts.",
+    "covered_by_test": "RankTests.test_gateway_rows_include_auto_first; RankTests.test_effort_forced_and_clamped"
+   },
+   {
+    "id": "G-03",
+    "behavior": "Gateway.models(): returns [] if litellm_url is empty. It returns the cached list when now - fetched < 60 s or now - failed < 30 s (time.monotonic, both initialized to 0.0). Otherwise it sends GET litellm_url + '/model/info' with timeout 0.5 s, adding 'Authorization: Bearer <secrets[key_env]>' only when that secret is non-empty. It parses the body with json.load, takes .get('data', []) and calls models_from_info. On success it sets fetched=now. On OSError or ValueError it sets models=[] and failed=now. candidates() = gateway.models() + app_candidates(config). Each config reload creates a new Gateway, which resets the cache. The key is read only from secrets.env, never from the process environment.",
+    "source": "catalog.py:11-13,46-82",
+    "edge_cases": "In the first 60 s after boot, no fetch happens, because monotonic minus 0.0 is under 60. Use Option<Instant> in Rust. Caught: URLError, HTTPError, timeout, connection reset, JSONDecodeError, unknown url type. NOT caught: a non-dict JSON body (AttributeError), non-dict entries, http.client.IncompleteRead. Those propagate and fail the search. The timeout applies per socket operation, so DNS is not bounded. The call blocks the D-Bus handler and the prompt box's GTK main thread. A '#fragment' in url swallows '/model/info'.",
+    "covered_by_test": "none (models_from_info is tested; the HTTP path and caching are not)"
+   },
+   {
+    "id": "U-01",
+    "behavior": "fill(template, **values): (1) Run template.format(**{k: quote(v or '', safe='')}). Everything except A-Z a-z 0-9 _ . - ~ is percent-encoded as UTF-8 with uppercase hex, and space becomes %20. (2) parts = urlsplit(url). If parts.query is empty, return url unchanged. (3) Take the pairs from parse_qsl(query, keep_blank_values=True), drop every pair whose DECODED value is empty, rebuild the query with urlencode(pairs, quote_via=quote) (safe='' for both keys and values), and return urlunsplit.",
+    "source": "launch.py:21-28",
+    "edge_cases": "Verified vectors: 'claude://claude.ai/new?q={prompt}' + 'hello & goodbye?' → 'claude://claude.ai/new?q=hello%20%26%20goodbye%3F'. 'x://new?model={model}' with no model → 'x://new' (the '?' is dropped). '?q={prompt}&flag&x=' → '?q=p' (key-only params dropped). Literal template parts get re-normalized: '+' → %20, '/' → %2F (doc example folder=/home/you/... → folder=%2Fhome%2Fyou%2FProjects%2Fmy-app), '%FF' → %EF%BF%BD, '%zz' → %25zz, ';' and '=' in values → %3B/%3D, a literal space → %20, '&&' collapsed. An empty fragment '#' is dropped; '#frag' is kept. When a query exists, the scheme is lowercased ('Claude://Host/Path?q=' → 'claude://Host/Path?q='); a URL with no query keeps its case. 'x://?q=' → 'x:?q=' because the empty netloc drops '//'. 'http:/path?q=' → 'http:///path?q='. Leading whitespace is stripped; trailing whitespace is kept and encoded. Duplicate keys and their order are kept. str.format semantics leak: '{{x}}' → '{x}' (then %7B/%7D in the query); '{prompt:.2}' truncates; '{prompt!r}' adds quotes; '{prompt.upper}' leaks a method repr; '{0}' → IndexError; an unknown name → KeyError; a lone '{' → ValueError. All of these surface at activation.",
+    "covered_by_test": "UrlTests.test_app_url_encodes_prompt; UrlTests.test_empty_params_dropped; UrlTests.test_gateway_urls; RankTests.test_result_id_round_trip"
+   },
+   {
+    "id": "U-02",
+    "behavior": "url_for(config, cid, model, effort, prompt): kind, _, name = cid.partition(':'). APP: app = the first config.apps entry with id == name (ignores enabled and requires); returns fill(app.url, prompt=, model=, effort=) if app.url, else None. Otherwise, returns None if chat_url is empty. AUTO: fill(chat_url, model=auto_model, prompt=), with NO effort key. MODEL: fill(chat_url, model=gateway_model_id(name, effort), prompt=), where gateway_model_id = f'{base}@{effort}' if effort else base. Any other kind → None.",
+    "source": "launch.py:75-90",
+    "edge_cases": "'{effort}' in chat_url raises KeyError for both Auto and model rows. A model chosen through an alias on a gateway row is ignored. With model:big + effort high + chat_url 'http://127.0.0.1:3000/?models={model}&q={prompt}' the result is '...?models=big%40high&q=hi'. Auto gives models=smart-router. A base containing ':' survives, because partition splits at the first colon.",
+    "covered_by_test": "UrlTests.test_gateway_urls; UrlTests.test_no_chat_url_means_no_gateway_launch"
+   },
+   {
+    "id": "C-01",
+    "behavior": "fill_command(template, prompt, model, effort): PLACEHOLDER = r'\\{(\\w+)\\}' (Unicode \\w). Each top-level item is a group: a list item as-is, anything else wrapped as [item]. Each part is str(part). render(part) returns None if ANY placeholder name found in it maps to a missing or empty value; otherwise it replaces each {name} with the value verbatim in one pass, so values are never re-scanned. A group goes into argv only if every part rendered. Items without placeholders are always kept.",
+    "source": "launch.py:16,41-59",
+    "edge_cases": "Verified: an unknown name such as {foo} is always dropped. '{{prompt}}' → '{P}' (no brace escaping). 'x{prompt}y{model}' → 'xPyM'. '' is kept as an empty argument. Non-string parts: 5→'5', True→'True', 1.5→'1.5', and a nested list deeper than one level becomes its Python repr \"['c']\". A prompt containing '{model}' or shell metacharacters is passed through as one argument. ['{prompt}'] with an empty prompt → [].",
+    "covered_by_test": "CommandTests.test_full_command; CommandTests.test_optional_groups_dropped; CommandTests.test_prompt_is_one_argument_and_not_interpreted"
+   },
+   {
+    "id": "C-02",
+    "behavior": "command_for(app, model, effort, prompt): argv = fill_command(...). resolved = {p: which(p) for p in app.requires}. EVERY argv element exactly equal to a requires entry is replaced by its resolved path, when one was found. cwd = str(Path(app.cwd).expanduser()). Returns (argv, cwd).",
+    "source": "launch.py:62-67",
+    "edge_cases": "Verified: prompt 'claude' becomes '/usr/bin/claude' (bug), and so does a model equal to 'ptyxis'. cwd '' → '.' (the process cwd); '~/Projects/' → '/home/u/Projects'; 'a//b/./c' → 'a/b/c'; '~nosuchuser' → RuntimeError. A path containing '/' in requires is checked directly.",
+    "covered_by_test": "CommandTests.test_example_cli_row_uses_model_and_effort"
+   },
+   {
+    "id": "C-03",
+    "behavior": "which(program) = shutil.which(program, path=os.pathsep.join([$PATH or '', expanduser('~/.local/bin'), expanduser('~/bin')])). A name containing '/' is checked as given. Otherwise each directory is tried in order, with duplicates skipped. A hit must exist, be X_OK and not be a directory. The joined path is returned without canonicalization.",
+    "source": "launch.py:17-18,31-34",
+    "edge_cases": "Verified: with PATH unset, the leading empty entry resolves the name relative to the process cwd ('fakeprog' found). which('./fakeprog') → './fakeprog'. A directory name → None. expanduser uses $HOME, then falls back to pwd. Tests monkeypatch launch.which so every name is found at '/usr/bin/<name>' except names starting with 'missing-'. A Rust port needs the same injection seam.",
+    "covered_by_test": "CommandTests.test_missing_requirement_hides_app; CommandTests.test_cli_row_hidden_without_claude"
+   },
+   {
+    "id": "L-01",
+    "behavior": "activate(config, result_id, prompt): parse the id. app = the first config.apps entry with 'app:'+id == cid (no enabled check). If app.copy_prompt, copy the prompt to the clipboard FIRST. If app.command is non-empty: build (argv, cwd), log 'running %s in %s' % (argv[0], cwd), run_command, return; the url is ignored. Otherwise url = url_for(...). If it is truthy, log 'opening ' + url.split('?')[0] and call Gio.AppInfo.launch_default_for_uri(url, None). Otherwise do nothing. The logger is named 'llm-search'.",
+    "source": "launch.py:105-119",
+    "edge_cases": "An empty argv after filling raises IndexError at the log line. A missing cwd raises FileNotFoundError from Popen. copy_prompt with neither command nor url only copies. Gateway and Auto rows never copy.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "L-02",
+    "behavior": "run_command: subprocess.Popen(argv, cwd=cwd, start_new_session=True (setsid), stdin, stdout and stderr = /dev/null, close_fds=True). The environment is inherited. EXTRA_PATH is NOT added to the child's PATH; only argv items that match requires are absolutized. The process is never waited on.",
+    "source": "launch.py:70-72",
+    "edge_cases": "Python reaps finished children on the next Popen. A Rust port in the resident prompt box must reap them (a waiter thread or SIGCHLD) or double-fork to avoid zombies. Use CommandExt::process_group(0) or setsid in pre_exec.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "L-03",
+    "behavior": "copy_to_clipboard(text): if shutil.which('wl-copy') finds it on the default PATH, run ['wl-copy','--',text] and wait for it. Otherwise, if xclip is found, run ['xclip','-selection','clipboard'] with the UTF-8 text on stdin. check=False. If neither exists, nothing happens.",
+    "source": "launch.py:93-97",
+    "edge_cases": "EXTRA_PATH is not used here. Exit status is ignored.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CF-01",
+    "behavior": "home() = Path($LLM_SEARCH_HOME) if the variable is non-empty, else Path.home()/'.llm-search'. config_dir() = home/'config'. state_dir() = home/'state'.",
+    "source": "config.py:16-25",
+    "edge_cases": "The value is used verbatim, with NO '~' expansion ('~/rel' gives the literal relative path '~/rel/config'); relative paths are relative to the cwd. An empty variable means the default. state_dir is unused in Python. The D-Bus .service files pass LLM_SEARCH_HOME=@HOME@.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CF-02",
+    "behavior": "load(directory=None): dir = directory or config_dir(). Runs migrate_legacy_settings(dir), then reads agents.toml with tomllib; a missing file gives {}. Builds Config with: min_chars = search.min_chars (default 3); max_rows = search.max_rows (5); apps = [App(**t) for t in data['app']]; aliases = {k.lower(): v}; rules = [Rule(**r) for r in routing.rule]; high_effort_patterns = routing.high_effort_patterns ([]); low_effort_max_words = routing.low_effort_max_words (8); litellm_url = gateway.url ('').rstrip('/'); litellm_key_env = gateway.key_env ('LITELLM_MASTER_KEY'); chat_url = gateway.chat_url (''); auto_model = gateway.auto_model ('smart-router'); prompt_idle_minutes = prompt.idle_minutes (30.0); secrets = read_env_file(dir/'secrets.env'); directory = dir. App defaults: url '', command [], cwd '~', requires [], description '', icon 'system-search-symbolic', tags/models/efforts [], priority 0.0, copy_prompt False, enabled True. Rule default: weight 1.0.",
+    "source": "config.py:28-70,89-98,184-207",
+    "edge_cases": "Verified: an unknown key in [[app]] or [[routing.rule]], or a missing id, name, tag or patterns, raises TypeError, and the whole load fails. Unknown top-level tables and keys are ignored. Types are not checked: min_chars=2.5 works; an integer priority or weight is fine; strings fail later, at rank time. Alias key collisions after lowercasing: the last one wins ({Foo, foo} → foo's value). Alias values are not lowercased. 'http://h:1///' → 'http://h:1'. Errors that propagate: TOMLDecodeError, UnicodeDecodeError, PermissionError, and anything from the legacy migration. App.description is loaded but unused. A Rust port deserializing with serde must accept integer-or-float for priority, weight and idle_minutes, and decide whether to keep accepting floats for min_chars and max_rows.",
+    "covered_by_test": "SettingsTests.* (via config.load); RankTests.test_best_app_always_present"
+   },
+   {
+    "id": "S-01",
+    "behavior": "read_env_file(path): read_text, returning {} on OSError. For each line from str.splitlines(): strip it; skip it if empty, if it starts with '#', or if it has no '='. Split at the first '=': key = left.strip(), value = right.strip().strip(\"'\\\"\"). A later duplicate overrides an earlier one.",
+    "source": "config.py:73-86",
+    "edge_cases": "Verified: A = 'quoted' → quoted. C='\"mixed\"' → mixed: every leading and trailing quote character is stripped independently, unpaired too. D=a=b → 'a=b'. 'E=v # not comment' keeps the comment text. '  F  =  spaced  ' → F=spaced. '=novalue' gives the empty key ''. 'export H=1' gives key 'export H'. 'I=' → ''. 'K=\"\"' → ''. splitlines also splits on \\x0b, \\x0c, \\x1c-\\x1e, \\x85,  ,   and \\r (verified 'A=1\\x0bB=2 C=3'). Invalid UTF-8 raises UnicodeDecodeError, which is NOT caught, so config load fails. The encoding is the locale encoding.",
+    "covered_by_test": "none directly (SettingsTests.test_set_secret_keeps_other_lines_and_mode exercises writing)"
+   },
+   {
+    "id": "S-02",
+    "behavior": "set_secret(key, value, directory): lines = read_text().splitlines() ([] if the file is missing). Keep every line whose ln.strip().partition('=')[0].strip() != key. If value is non-empty, append f'{key}={value}' at the END. Write '\\n'.join(kept) + '\\n' through os.open(O_WRONLY|O_CREAT|O_TRUNC, 0o600), then os.chmod(path, 0o600).",
+    "source": "config.py:121-134",
+    "edge_cases": "Verified: 'A=1\\r\\nK=old\\nB=2\\n  K = dup\\nK\\n# K=commented\\nexport K=x\\n' with K=new gives 'A=1\\nB=2\\n# K=commented\\nexport K=x\\nK=new\\n'. Every K line is removed (including a bare 'K' and an indented ' K = dup'); commented lines and 'export K' are kept; CRLF becomes LF; the key moves to the end. Removing a key from a missing file creates a file containing just '\\n'. The value is written raw: no quoting, and newlines are not rejected. Not atomic: a truncate followed by a write. An existing 0644 file holds the new secret at 0644 until the chmod. The directory must exist.",
+    "covered_by_test": "SettingsTests.test_set_secret_keeps_other_lines_and_mode"
+   },
+   {
+    "id": "SIG-01",
+    "behavior": "signature(directory) = a tuple, for agents.toml and then secrets.env, of (st_mtime_ns, st_size), or None when the file is missing (FileNotFoundError only). stat follows symlinks. Reload triggers: the provider compares the signature on EVERY search and, if it changed, runs load() and creates a new Gateway. The prompt box compares it in open(). The settings window watches agents.toml with Gio monitor_file(WATCH_MOVES), debounces by 300 ms, compares signature(self.directory) with app.signature, and on a difference reloads, rebuilds its pages and shows the toast 'Updated from agents.toml'. Its own saves call app.reload(), which records the new signature, so they never trigger the refresh.",
+    "source": "config.py:137-147; provider.py:54-59; prompt.py:163-184; prefs.py:41-68,93-102",
+    "edge_cases": "A missing directory gives (None, None). If load() raises during a reload, the signature is not updated, so the next search retries; meanwhile the search returns a D-Bus error. Two same-size edits within one timestamp tick go unnoticed. PermissionError on stat propagates. settings.toml is not part of the signature (docs say 'three files').",
+    "covered_by_test": "SettingsTests.test_signature_changes_on_update"
+   },
+   {
+    "id": "UP-01",
+    "behavior": "update(edits, directory): path = dir/'agents.toml'; text = read_text() ('' if missing); new = toml_edit.apply(text, edits). If new == text, return without writing. Otherwise write dir/'.agents.toml.tmp'; if agents.toml exists, chmod the temp file to its mode & 0o777; then tmp.replace(path), an atomic rename.",
+    "source": "config.py:101-118",
+    "edge_cases": "Verified: mode 0640 is kept. A missing file is created at the umask mode (0644) with the content '\\n[search]  # added by the settings window\\nmin_chars = 4\\n'. A symlinked agents.toml is REPLACED by a regular file, and the link target is left unchanged (verified). No fsync. The temp file name is fixed, so concurrent writers race. An [[app]] edit against a missing file raises EditError. Raises EditError (a ValueError subclass) or OSError, and on failure the file is untouched.",
+    "covered_by_test": "SettingsTests.test_unknown_agent_is_refused_and_file_untouched; SettingsTests.test_multiline_values_are_refused; SettingsTests.test_signature_changes_on_update"
+   },
+   {
+    "id": "M-01",
+    "behavior": "migrate_legacy_settings(dir): data = _read_toml(dir/'settings.toml') ({} if missing), then return if the file doesn't exist. Edits are, in order: for table in (search, prompt, routing, gateway), each (table, key, None, value) in that table's key order; then, for each app_id in data['app'] (the 0.4.0 shape [app.\"<id>\"]), each (\"app\", key, app_id, value) whose key is enabled, priority or cwd. update(edits, dir). On EditError or OSError, return and leave the legacy file in place. Otherwise rename it to settings.toml.migrated. Runs at the start of EVERY load().",
+    "source": "config.py:89-98,165-181",
+    "edge_cases": "Verified: an invalid settings.toml raises TOMLDecodeError out of load(), so the whole config fails, every time. Array values such as routing.high_effort_patterns, or an unknown app id, make the migration abort silently; the file stays, and it is retried and fails again on every load. Legacy app keys other than the three are dropped silently. An empty settings.toml still runs apply([]), which validates agents.toml, and then it is renamed. Missing [gateway] keys are appended in REVERSE order (chat_url above url). A gateway url keeps its trailing '/' in the file (load strips it). An existing settings.toml.migrated is overwritten.",
+    "covered_by_test": "SettingsTests.test_legacy_settings_file_is_migrated_once"
+   },
+   {
+    "id": "RD-01",
+    "behavior": "restore_defaults(dir) = update([('search','min_chars',None,3), ('search','max_rows',None,5), ('prompt','idle_minutes',None,30.0), ('routing','low_effort_max_words',None,8)], dir). The values come from the Config() field defaults through the GENERAL map. Agents, aliases, rules, the gateway and the shortcut are untouched.",
+    "source": "config.py:150-162",
+    "edge_cases": "Verified: on the pristine example, the only diff is '- idle_minutes = 30' / '+ idle_minutes = 30.0', because the factory value is the float 30.0, formatted with repr. A second restore is a no-op. The settings window's spin row writes idle_minutes as an int, so these alternate. The settings window then closes and reopens with the toast 'Defaults restored'.",
+    "covered_by_test": "SettingsTests.test_restore_defaults_resets_general_but_keeps_agents_rules_and_gateway"
+   },
+   {
+    "id": "T-01",
+    "behavior": "format_value(v): bool → 'true'/'false', checked BEFORE int. int or float → repr(v). str → json.dumps(v) with ensure_ascii=True. Anything else → EditError(f\"can't write {type(v).__name__} values\").",
+    "source": "toml_edit.py:25-32",
+    "edge_cases": "Verified repr: 30.0→'30.0', 2.5→'2.5', 0.1→'0.1', 1e16→'1e+16', 1e15→'1000000000000000.0', 1e-5→'1e-05', 0.0001→'0.0001', -0.0→'-0.0', inf→'inf', nan→'nan' (the readback then fails because nan != nan), 0.30000000000000004 kept; 2**70 → full digits. json.dumps: 'é'→\"é\"; '😀'→\"😀\", which TOML rejects ('Escaped character is not a Unicode scalar value'), so EditError; control chars → \\u0001; DEL → \\u007f; '/' is not escaped; \\n \\t \\\" \\\\ use short forms. None → \"can't write NoneType values\"; list → \"can't write list values\".",
+    "covered_by_test": "SettingsTests.test_edits_apply_and_keep_every_comment (bool, int, float, str)"
+   },
+   {
+    "id": "T-02",
+    "behavior": "Header detection: HEADER = r'^\\s*(\\[\\[?)\\s*([A-Za-z0-9_.\\\"\\' -]+?)\\s*(\\]\\]?)\\s*(#.*)?$' is matched against each line. A line is a header only if (group1 == '[[') == (group3 == ']]'). The name is group(2).strip(), compared LITERALLY, quotes and inner spaces included. _headers() returns (index, name, is_array) for every line, with no awareness of multi-line strings or arrays.",
+    "source": "toml_edit.py:18,35-42",
+    "edge_cases": "Verified: '  [ search ]   # hi' is the header 'search'. '[[app]' and '[app]]' are rejected. '[\"search\"]' has the name '\"search\"', which is not 'search', so a new [search] gets appended and the edit fails as a duplicate table. '[a . b]' has the name 'a . b'. A multi-line array line consisting of exactly '  [\"--v\"]' is detected as a header named '\"--v\"' (verified), and so is '[search]' inside a \"\"\" string. That truncates spans and causes spurious EditErrors; it is safe only because of the readback check (T-09).",
+    "covered_by_test": "none directly"
+   },
+   {
+    "id": "T-03",
+    "behavior": "_span(lines, start) is the index of the next header line after start, of ANY name or kind, or len(lines). Key search and insertion happen only inside [header+1, span).",
+    "source": "toml_edit.py:45-50",
+    "edge_cases": "A sub-table header such as [app.env] ends an [[app]] span.",
+    "covered_by_test": "SettingsTests.test_only_the_edited_lines_change (indirect)"
+   },
+   {
+    "id": "T-04",
+    "behavior": "_key_line(key) = r'^(\\s*)' + re.escape(key) + r'(\\s*=\\s*)(.*)$'. It matches only a BARE key at the start of a line (indentation allowed); group 2 is the exact separator, kept as-is.",
+    "source": "toml_edit.py:53-54",
+    "edge_cases": "These do not match: quoted keys ('\"min_chars\" = 3', which then fails as 'Cannot overwrite a value'), dotted keys ('search.min_chars = 3', which fails as 'Cannot declare (search) twice') and commented lines ('# min_chars = 3', so the key counts as missing). 'id' does not match 'idle_minutes'. 'min_chars=3' matches with the separator '='.",
+    "covered_by_test": "SettingsTests.test_edits_apply_and_keep_every_comment"
+   },
+   {
+    "id": "T-05",
+    "behavior": "_split_value(rest): the cut points are the index of every '#' in rest, in order, plus len(rest). For each cut, candidate = rest[:cut].rstrip(). The FIRST non-empty candidate that parses as a complete TOML value (tomllib.loads('x = ' + candidate) succeeds) returns (candidate, rest[len(candidate):]); the remainder keeps its whitespace and comment exactly. If none parses, return None: the value continues on following lines.",
+    "source": "toml_edit.py:57-64,82-87",
+    "edge_cases": "Verified: '\"a#b\"  # c # d' → value '\"a#b\"' and suffix '  # c # d'. '3   ' → suffix '   '. '[1, 2]  # arr' is complete and gets replaced by a scalar. '{a = 1}' is complete and gets replaced. '[1,' → None → EditError(f'{key} is a multi-line value; edit it in the file'). rstrip uses Python whitespace; TOML whitespace is space and tab only. Completeness depends on tomllib (TOML 1.0) accepting the value; the Rust TOML parser decides this in a port.",
+    "covered_by_test": "SettingsTests.test_multiline_values_are_refused; SettingsTests.test_only_the_edited_lines_change"
+   },
+   {
+    "id": "T-06",
+    "behavior": "_set_in_span: replaces the FIRST line in the span that matches the key with indent + key + original separator + format_value(v) + original suffix. If the key is not in the span, it inserts the unindented line f'{key} = {format_value(v)}' at index (insert_after if given, else header) + 1, i.e. directly below the header, or directly below the id line for [[app]] items.",
+    "source": "toml_edit.py:67-79",
+    "edge_cases": "Verified: 'priority = 1.0        # the default choice...' → 'priority = 2.0        # the default choice...', with alignment kept. '  min_chars=3#c' → '  min_chars=4#c'. A missing key goes ABOVE the table's existing blank lines, comments and keys: '[search]\\nmin_chars = 4\\n\\n# comment\\nmax_rows = 5'. The toml_edit crate appends new keys at the END of the table by default, so the position differs unless handled explicitly.",
+    "covered_by_test": "SettingsTests.test_edits_apply_and_keep_every_comment; SettingsTests.test_only_the_edited_lines_change"
+   },
+   {
+    "id": "T-07",
+    "behavior": "set_table_value(text, table, key, v): lines = text.splitlines(). On the first non-array header whose name == table, run _set_in_span. If there is none, append ['', f'[{table}]  # added by the settings window', f'{key} = {fv}']. Return '\\n'.join(lines) + '\\n'.",
+    "source": "toml_edit.py:90-97",
+    "edge_cases": "Verified: two edits to a missing table in one call → '[gateway]  # added by the settings window\\nchat_url = \"b\"\\nurl = \"a\"': the later edit goes ABOVE the earlier one. The table name is inserted raw, without quoting. Editing table 'app' when only [[app]] exists appends [app], which fails as 'Cannot declare (app) twice'. An empty file becomes '\\n[search]  # added by the settings window\\nmin_chars = 5\\n'. A commented-out '# [gateway]' block is ignored, and a new table is appended at the end of the file.",
+    "covered_by_test": "SettingsTests.test_missing_gateway_table_is_added"
+   },
+   {
+    "id": "T-08",
+    "behavior": "set_array_item_value(text, array, item_id, key, v): for each array header (is_array) whose name == array, scan its span for lines matching _key_line('id') whose _split_value value parses (tomllib 'x = <value>')['x'] to a value == item_id, then run _set_in_span with insert_after set to that id line. If no entry matches, raise EditError(f'no [[{array}]] with id {item_id!r}').",
+    "source": "toml_edit.py:100-113",
+    "edge_cases": "Verified: the id does not need to be the first key. A missing key is inserted right after the id line ('id = \"a\"  # the id\\nenabled = false\\ncwd = \"~/x\"'), and for an id on the first line it lands above name. The message uses Python repr: \"no [[app]] with id 'zz'\". An integer id 1 does not equal '1'. If ids are duplicated, the first block wins. Only 'app' is used today; [[routing.rule]] has no id, so rules can't be edited.",
+    "covered_by_test": "SettingsTests.test_edits_apply_and_keep_every_comment; SettingsTests.test_unknown_agent_is_refused_and_file_untouched"
+   },
+   {
+    "id": "T-09",
+    "behavior": "apply(text, edits): applies each edit in order, as (table, key, None, v) for a [table] or (table, key, id, v) for an [[table]] item. Then it parses the WHOLE result with tomllib; on failure it raises EditError('the edit would break the file: <tomllib message>'). Then, for each edit, it reads the value back: data.get(table,{}).get(key), or the key of the first item in data[table] whose id == item_id. If got != v (Python ==), it raises EditError(f'{table}.{key} reads back as {got!r}, not {v!r}'). It returns the new text and never writes.",
+    "source": "toml_edit.py:116-138",
+    "edge_cases": "An already invalid file fails ANY edit, including apply([]). Two edits to the same key fail ('reads back as 5, not 4'). Python == lets True==1==1.0, so the check is type-lenient: writing True into min_chars passes, and 1.0 replaces an int. A dotted table name 'a.b' always fails the readback. The tomllib error text appears in toasts. The verification also catches the fake-header and duplicate-insert cases.",
+    "covered_by_test": "SettingsTests.test_unknown_agent_is_refused_and_file_untouched; SettingsTests.test_multiline_values_are_refused"
+   },
+   {
+    "id": "T-10",
+    "behavior": "Line normalization on every apply: the text is split with str.splitlines() and joined with '\\n', and a single trailing '\\n' is added. Every edit therefore converts CRLF and lone CR to LF and adds a missing final newline. Trailing blank lines survive.",
+    "source": "toml_edit.py:92,95,97,101,112",
+    "edge_cases": "Verified: a literal   or \\x85 inside a TOML string splits that line, so ANY edit to such a file fails with EditError ('Illegal character'). A CRLF file is rewritten as LF even when the value is unchanged, because new != text.",
+    "covered_by_test": "SettingsTests.test_only_the_edited_lines_change"
+   },
+   {
+    "id": "P-01",
+    "behavior": "Keys the current settings window writes, with types: [search] min_chars and max_rows (int, spin ranges 1-20 and 1-10); [prompt] idle_minutes (int, 0-480 step 5); [routing] low_effort_max_words (int, 0-50); [gateway] url, chat_url and auto_model (stripped str; an empty url disables the gateway); [[app]] enabled (bool), priority (float, -10..10 step 0.5, 1 digit) and cwd (stripped str; '' is saved as '~'; the folder picker replaces a home prefix with '~'). secrets.env[key_env] gets the stripped value; empty removes it. Error toasts read \"Couldn't save: <msg>\". Idle timer: minutes <= 0 quits at once; otherwise timeout_add_seconds(int(minutes*60)).",
+    "source": "prefs.py:87-102,139-325; prompt.py:186-194",
+    "edge_cases": "The folder picker's home-prefix test is a plain startswith, so '/home/jem2/x' becomes '~2/x'. The gateway Test button fetches synchronously on the GTK thread. A spin row clamps out-of-range file values only for display.",
+    "covered_by_test": "none"
+   }
+  ],
+  "external_contracts": [
+   "D-Bus search provider: bus name io.github.oscillatingjem.AgentSearch.SearchProvider, object path /io/github/oscillatingjem/AgentSearch/SearchProvider, interface org.gnome.Shell.SearchProvider2. Methods: GetInitialResultSet(as terms)->as; GetSubsearchResultSet(as previous, as terms)->as (previous is ignored and a full search runs); GetResultMetas(as ids)->aa{sv} with keys id, name, description and gicon (a string from Gio.ThemedIcon.new(icon).to_string()), where ids not in the last search are skipped; ActivateResult(s id, as terms, u timestamp); LaunchSearch(as terms, u timestamp). Errors: org.freedesktop.DBus.Error.Failed (str(exception)) and org.freedesktop.DBus.Error.UnknownMethod. The service is a G_APPLICATION_IS_SERVICE with a 60000 ms inactivity timeout.",
+   "Search provider .ini: DesktopId=io.github.oscillatingjem.AgentSearch.desktop, BusName as above, ObjectPath as above, Version=2. GNOME reads it only from system data dirs, so the installer adds ~/.llm-search/state/xdg through ~/.config/environment.d/60-llm-search.conf.",
+   "Prompt box: application id io.github.oscillatingjem.AgentSearch at object path /io/github/oscillatingjem/AgentSearch (DBusActivatable). Actions: 'search' (s) and 'preferences'. It is started with --gapplication-service. The provider calls org.freedesktop.Application.ActivateAction('search', [<s joined terms>], {}).",
+   "D-Bus .service Exec lines set the env vars LLM_SEARCH_HOME=@HOME@ and PYTHONPATH. The Rust Exec must keep passing LLM_SEARCH_HOME.",
+   "Result id format: '<cid>|<model>|<effort>|<12-hex blake2s-48 query key>', where cid is 'app:<id>', 'model:<base>' or 'auto'.",
+   "Row title 'Name · Model' (U+00B7) and subtitle '<effort> effort · tag, tag'. Meta description '“<prompt>” · <subtitle>'.",
+   "Env var LLM_SEARCH_HOME: an empty value means the default $HOME/.llm-search; no ~ expansion. HOME and PATH are also read.",
+   "Files: $LLM_SEARCH_HOME/config/agents.toml; config/secrets.env (forced to mode 0600); config/settings.toml (legacy 0.4.0), renamed to settings.toml.migrated; config/.agents.toml.tmp (the temp file for atomic writes); $LLM_SEARCH_HOME/state/ (install, xdg).",
+   "agents.toml schema: [search] min_chars=3, max_rows=5; [prompt] idle_minutes=30; [[app]] id*, name*, url, command (argv list with nested optional groups), cwd='~', requires, description, icon='system-search-symbolic', tags, models, efforts, priority=0.0, copy_prompt=false, enabled=true; [aliases] name = 'app-id' | 'app-id:model' | 'gateway-model'; [gateway] url, key_env='LITELLM_MASTER_KEY', chat_url, auto_model='smart-router'; [routing] low_effort_max_words=8, high_effort_patterns=[]; [[routing.rule]] tag*, patterns*, weight=1.0. Unknown keys in [[app]] or [[routing.rule]] currently fail the load.",
+   "Placeholders {prompt}, {model} and {effort}: url templates are percent-encoded; command templates are inserted raw. chat_url receives only {model} and {prompt}.",
+   "Search syntax: @name, and !level with low/medium/high/xhigh/max and the short forms l lo m med h hi xh x.",
+   "Per-user binary search dirs EXTRA_PATH: ~/.local/bin and ~/bin, appended after $PATH.",
+   "Gateway HTTP: GET <url>/model/info with 'Authorization: Bearer <secrets.env[key_env]>'. Response {'data':[{'model_name', 'model_info':{display_name, tags, aliases, base, effort, icon, priority}}]}. The chat model id for variants is '<base>@<effort>', which the LiteLLM model_name must follow.",
+   "Icons: apps default to 'system-search-symbolic', gateway models to 'user-available-symbolic', Auto is 'emblem-system-symbolic'.",
+   "Clipboard tools: 'wl-copy -- <text>', or 'xclip -selection clipboard' with stdin.",
+   "Comment marker on tables the editor appends: '[<table>]  # added by the settings window'.",
+   "Keyboard shortcut: GNOME custom keybinding at /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/llm-search/ (schema org.gnome.settings-daemon.plugins.media-keys.custom-keybinding). Keys: name 'Agent Search', command '<home>/.local/bin/llm-search prompt', binding. The path is listed in org.gnome.settings-daemon.plugins.media-keys custom-keybindings.",
+   "Log lines (logger 'llm-search', format '%(name)s: %(message)s'): 'running <argv0> in <cwd>' and 'opening <url before ?>'.",
+   "CLI bin/llm-search query calls GetInitialResultSet via gdbus. 'llm-search test' runs the Python unittest suite, so it will need a Rust equivalent (cargo test) or a wrapper."
+  ],
+  "python_specific_semantics": [
+   "User routing patterns (high_effort_patterns, [[routing.rule]].patterns) run through Python re.search(p, prompt, re.IGNORECASE) on str: an unanchored search, compiled lazily at search time and cached by the re module. Neither the Rust regex crate nor fancy-regex reproduces this exactly. fancy-regex adds lookaround, backrefs, atomic groups and possessive quantifiers, but delegates to regex for \\w, \\b and \\s, so the Unicode differences below remain. Recommendation: compile every pattern at load time with '(?i)' prepended, report errors with the rule index, and keep a corpus test of the shipped patterns.",
+   "Python \\w = str.isalnum() or '_'; Rust \\w = Alphabetic + Mark + Nd + Pc + Join_Control. Verified in Python: combining U+0301 is NOT \\w; '²', '½' and 'Ⅻ' ARE \\w; '‿' (U+203F) and ZWJ are NOT. Consequences for \\b: Python matches '\\bcafe\\b' in 'café' (Rust does not, because the mark is \\w there), and Python does NOT match '\\bgit\\b' in 'git²' (Rust does).",
+   "Python \\s includes \\x1c-\\x1f and \\x85/\\xa0, but not ​ or ᠎; Rust \\s (White_Space) lacks \\x1c-\\x1f. \\d is Unicode Nd in both.",
+   "Python IGNORECASE: 'İ' and 'i' match each other in both directions, 'k' matches 'K' (U+212A), 's' matches 'ſ', 'σ' matches 'ς', 'ß' matches 'ẞ', 'ss' does not match 'ß'. Rust (?i) uses simple case folding, under which U+0130 likely does NOT match 'i'. Verify in Rust.",
+   "Python '$' (without MULTILINE) also matches before a final '\\n' ('x$' matches 'x\\n'); Rust '$' matches only at the end. Python \\Z means end of string; Rust has no \\Z (it is a syntax error) and uses \\z. Python 3.14 also accepts \\z.",
+   "Syntax Python accepts but Rust regex rejects: lookbehind and lookahead ((?<=, (?=, (?!, (?<!), backrefs (\\1, (?P=n)), possessive quantifiers (a++), atomic groups ((?>...)), conditionals, \\N{NAME}, octal \\0 escapes, a literal 'a{3', a bare '{'. Behaves differently: '[[:alpha:]]' is a nested-set literal in Python (it matches '[', ':', 'a'... followed by ']'), but a POSIX class in Rust. Rust accepts but Python rejects: \\p{L}, (?<name>...), and global flags in mid-pattern ('a(?i)b' is an error in Python 3.11+). Python accepts 'a{,3}' as {0,3}; check Rust.",
+   "The pattern-evaluation order is observable: any() short-circuits, and high_effort_patterns run only when no !effort is given. So invalid patterns fail only for some prompts today. A failure raises out of rank(): the provider returns a D-Bus error and the prompt box shows no rows.",
+   "str.split() (no args), str.strip() and str.rstrip() use str.isspace() (it includes \\x1c-\\x1f). str.splitlines() also breaks on \\v, \\f, \\x1c-\\x1e, \\x85,  ,   and a lone \\r. Rust lines() breaks only on \\n and \\r\\n.",
+   "len() counts code points (min_chars). str.lower() uses the full Unicode lowercase mapping, including final sigma ('İ' → 'i̇'). str.capitalize() titlecases the first char and lowercases the rest ('GPT'→'Gpt', 'ǆ'→'ǅ', 'ß'→'Ss'); Rust std has no titlecase.",
+   "str.startswith, the 'in' operator (substring when the operand is a str), str.partition (first separator only) and str.split('|') (all separators).",
+   "hashlib.blake2s(digest_size=6): the digest length lives in the parameter block, so this is not a truncated BLAKE2s-256.",
+   "json.dumps(str) with ensure_ascii=True: non-ASCII → \\uXXXX, astral chars → surrogate-pair escapes (invalid in TOML, so EditError), control chars → \\u00XX with short forms for \\b \\f \\n \\r \\t, DEL → \\u007f, '/' unescaped. serde_json writes raw UTF-8 instead, and toml_edit picks literal or basic quoting automatically. Either gives a byte-level difference.",
+   "repr(float) is the shortest round-trip form and switches to exponent notation at >= 1e16 or < 1e-4, with a 2-digit signed exponent ('1e+16', '1e-05', '-0.0', 'inf', 'nan'). Rust {} prints '30' for 30.0 and never uses an exponent; Rust {:?} prints '30.0', '1e16' and 'NaN', and 'NaN' is invalid TOML. restore_defaults depends on '30.0'. repr(int) has arbitrary precision. bool is checked before int because bool is a subclass of int.",
+   "Python == in the readback check: 1 == 1.0 == True, nan != nan.",
+   "tomllib implements TOML 1.0, accepts arbitrary-size ints, and produces its own error messages (shown in toasts). It decides _is_complete for values, so a Rust TOML parser that accepts TOML 1.1 (newlines in inline tables, \\e, \\xHH) changes which values count as single-line.",
+   "str.format mini-language in url and chat_url templates: '{{'/'}}' escapes, format specs ('{prompt:.2}'), conversions ('!r'), attribute access, and positional '{0}' raising IndexError, an unknown name raising KeyError, a lone '{' raising ValueError.",
+   "urllib.parse: quote(v, safe='') keeps only ALPHA, DIGIT and '_.-~', using UTF-8 and uppercase hex. urlsplit lowercases the scheme, lstrips C0 control and space chars, and deletes \\t\\r\\n. parse_qsl splits on '&' only, turns '+' into a space, percent-decodes with errors='replace' and skips empty pairs. urlencode(quote_via=quote) uses safe='', so '/' becomes %2F. urlunsplit drops an empty query or fragment, drops '//' for an empty netloc on non-netloc schemes ('x://?q=' → 'x:?q='), and adds '//' for uses_netloc schemes ('http:/p' → 'http:///p'). The Rust url crate (WHATWG) differs in all of these, so implement the pipeline by hand.",
+   "shutil.which: an empty PATH entry means the cwd, a name containing '/' is checked directly, the hit must pass X_OK and not be a directory, duplicates are skipped, and the joined path is returned. os.path.expanduser uses $HOME first, then pwd. Path('').expanduser() is '.', and Path normalization removes trailing '/' and '.' components. '~user' is expanded; an unknown home raises RuntimeError.",
+   "Python sorted(key, reverse=True) is stable: equal keys keep their input order. NaN keys break the ordering silently. min() returns the first minimum (the clamp_effort tie-break).",
+   "dict insertion order is part of the output: matched_tags gives the order of reasons; models_from_info keeps a key's first position when it is overwritten; a lowercase alias collision means the last one wins.",
+   "dataclass App(**table) and Rule(**table) reject unknown and missing keys (TypeError) but never check types. Python truthiness: enabled = 0 or '' is false, while 'false' as a string is true. str(part) for non-string command items gives 'True', '1.5' and \"['c']\".",
+   "time.monotonic() starts the cache timestamps at 0.0, so nothing is fetched in the first 60 s after boot.",
+   "Path.read_text, write_text and os.fdopen use the locale encoding (UTF-8 on Fedora; Rust is always UTF-8). os.open's mode is subject to the umask. os.replace swaps a symlink for a regular file.",
+   "subprocess.Popen(start_new_session=True, close_fds=True, DEVNULL) and implicit zombie reaping on later Popen calls. urllib's timeout applies per socket operation. json.load auto-detects UTF-8/16/32.",
+   "Exceptions caught in the gateway are OSError and ValueError, including URLError, HTTPError, socket timeout, JSONDecodeError and 'unknown url type' ValueError. AttributeError and http.client.HTTPException subclasses such as IncompleteRead escape."
+  ],
+  "bugs_or_gaps_found": [
+   "Ranker: with max_rows == 1, an explicit @gateway-model or @auto row is replaced by the best app agent (verified: '@coder explain this regex' → app:claude-cli). max_rows <= 0 still returns one row.",
+   "Alias targets are split with partition(':'), so a target written 'app:claude-cli' (cid 'app') never matches, and gateway model names containing ':' (common with ollama-style names) can't be alias targets.",
+   "command_for replaces EVERY argv element equal to a 'requires' program name, not only the program position. A prompt that is exactly 'claude', or a model named 'ptyxis', is rewritten to '/usr/bin/claude' (verified).",
+   "@matching lowercases the query but not app ids, gateway base ids or app model names, so uppercase ids and models are unreachable except through the display name. [aliases] keys are exact-match only: '@cl' does not reach alias 'cli'.",
+   "chat_url never receives {effort}, so a chat_url containing '{effort}' raises KeyError on activation. URL templates go through full str.format, so any literal '{' or '}' (for example JSON in a URL) breaks activation.",
+   "fill() rewrites literal template query parts: '/' → %2F (the documented 'folder=/home/you/...' example becomes folder=%2Fhome%2F...), '+' → %20, invalid %XX → %EF%BF%BD or %25XX, and key-only params ('?flag') disappear. It also drops '//' from 'scheme://?q=' URLs ('x:?q=...'), and lowercases the scheme only when a query exists.",
+   "Regex patterns are validated nowhere. They compile lazily at search time, so one bad pattern makes all rows disappear (D-Bus error; the prompt box list gets cleared), and the short-circuit means it may fail only for some prompts. The Rust port should validate at load and in the settings window's whole-config validation.",
+   "There is no schema or type validation. A string where a list is expected iterates its characters (patterns) or does substring matching (tags). An unknown key in [[app]] or [[routing.rule]] makes the whole config load fail with TypeError, so the provider service can't start, or every search returns an error. NaN priority breaks the sort. enabled = \"false\" (a string) counts as true.",
+   "The TOML editor writes strings with json.dumps(ensure_ascii=True). Any value containing an astral character (emoji) becomes surrogate escapes that TOML rejects, so saving fails with EditError. Non-ASCII BMP text is stored as \\uXXXX escapes instead of readable UTF-8.",
+   "The line-based editor splits with str.splitlines. A literal U+2028, U+0085 or \\x0b-\\x0c inside a string makes every edit fail. Any edit converts CRLF to LF and adds a final newline.",
+   "The HEADER regex has no awareness of multi-line arrays or strings: a last-element line like '[\"--verbose\"]' on its own line, or '[search]' inside a \"\"\" string, counts as a table header. The readback check turns this into a safe but spurious EditError. Quoted or dotted table names and keys are not recognized either, and produce duplicate-table or duplicate-key errors.",
+   "Placement of missing keys: they are inserted right below the table header, above existing comments and keys. Several missing keys added to a new table come out in reverse order (chat_url above url, in both the editor and the legacy migration).",
+   "update() replaces a symlinked agents.toml with a regular file (verified), which breaks dotfile-managed configs. It has no fsync, a fixed temp file name, and does not preserve ownership.",
+   "set_secret is not atomic: it truncates, then writes. A pre-existing 0644 file holds the new key at 0644 until the chmod. It moves the key line to the end, creates a file containing only '\\n' when removing a key from a missing file, and does not reject newlines in the value (line injection). read_env_file does not catch UnicodeDecodeError, so a non-UTF-8 secrets.env breaks the whole config load. Quote stripping is unpaired, and 'export KEY=' is not supported.",
+   "Legacy migration: an invalid settings.toml makes load() raise on every start. Array values or unknown app ids abort the migration silently, and it is then retried (and fails) on every load. Legacy app keys other than enabled, priority and cwd are dropped silently.",
+   "restore_defaults writes idle_minutes = 30.0 (float), while the settings window writes 30 (int), so the file flips between the two styles. Restore also always rewrites the file the first time.",
+   "Gateway: the cache timestamps start at 0.0 on the monotonic clock, so no fetch happens during the first 60 s after boot. A non-dict JSON body or entry, or IncompleteRead, escapes the except clause and fails the search. The fetch blocks the D-Bus handler and the GTK main thread for up to about 0.5 s per socket operation, without bounding DNS. display_name: null gives a row titled None. An entry whose base equals auto_model adds its efforts to the Auto row.",
+   "signature() covers only agents.toml and secrets.env, while CONFIGURATION.md says 'any of the three files'. Same-size edits within one timestamp tick are missed. PermissionError from stat is not caught.",
+   "parse_result_id breaks silently if an app id, gateway base or model contains '|'.",
+   "Launch: an empty argv after optional groups are dropped raises IndexError. A missing or empty cwd gives a FileNotFoundError, or the process cwd '.'. Children are never explicitly reaped, so the Rust resident prompt box must reap them. The clipboard helpers ignore EXTRA_PATH and wl-copy runs synchronously.",
+   "which() with PATH unset searches the process cwd first, because the leading empty PATH entry is honored.",
+   "Settings folder picker: '/home/jem2/x' becomes '~2/x', because the home-prefix test is a plain startswith. The gateway Test button fetches synchronously on the UI thread.",
+   "Dead code or inconsistencies: Query.is_empty, state_dir() and App.description are unused. activate() ignores enabled, so a disabled app's id still launches if one is passed in.",
+   "Test coverage gaps worth porting as new tests: Gateway HTTP and cache timing, read_env_file parsing, the activate()/copy_prompt paths, fill() normalization edge cases, the resolve() ordering edge cases (alias falling through, step 3 before step 4), max_rows <= 1, the toml_edit insertion position for missing keys, format_value float and str output, and line-ending normalization.",
+   "Next feature (full settings window): the current editor can only replace single-line scalars. It cannot write arrays (tags, models, efforts, requires, patterns), nested command lists or inline tables, add, delete or rename [[app]] blocks, edit [[routing.rule]] (no id), or delete keys. A toml_edit-crate (Rust) implementation will have different decor and placement rules, so keep the observable contract: an edited value keeps its key's indentation, separator and trailing comment. Then decide explicitly whether new keys go below the header (today) or at the end of the table (the toml_edit default)."
+  ]
+ },
+ "specUi": {
+  "area": "Agent Search 0.5.0 user-facing surface: the SearchProvider2 D-Bus service, prompt box, settings window, GNOME shortcut module, and the bash installer/CLI with its templates. This is the behavior a Rust port (gtk4-rs + libadwaita-rs) must match. The ranker, launch and TOML-edit internals are included only where they decide what crosses D-Bus or gets written to disk.",
+  "behaviors": [
+   {
+    "id": "DB-01",
+    "behavior": "The provider process is a GApplication with application_id 'io.github.oscillatingjem.AgentSearch.SearchProvider', flags IS_SERVICE and inactivity_timeout 60000 ms. It only starts through D-Bus activation (the rendered .service Exec line, no extra args) and calls run(argv).",
+    "source": "src/llm_search/provider.py:12,97-101,141-143; share/io.github.oscillatingjem.AgentSearch.SearchProvider.service.in:1-3",
+    "edge_cases": "If the bus name is already owned, registration fails and the process exits. GLib's own short startup grace for a service that has no calls yet is internal to GLib. A port built on gio::Application keeps it automatically; one built on zbus must re-create the startup grace and the idle exit itself.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "DB-02",
+    "behavior": "The constructor runs before bus registration. It loads config through config.load(): $LLM_SEARCH_HOME/config (default ~/.llm-search/config), agents.toml plus secrets.env. It then builds a fresh Gateway and records signature(). load() first runs migrate_legacy_settings, so a provider start can rewrite agents.toml and rename settings.toml to settings.toml.migrated.",
+    "source": "provider.py:47-52,101; config.py:165-207",
+    "edge_cases": "These all raise before run(), so the process dies: a TOML syntax error, an unknown key in an [[app]] or [[routing.rule]] table, or a missing id/name/tag/patterns. GNOME then gets no rows, and every new search re-triggers activation. A missing agents.toml gives the defaults (no apps). Unknown top-level tables and unknown keys in [search]/[gateway]/[prompt]/[routing] are ignored.",
+    "covered_by_test": "SettingsTests.test_legacy_settings_file_is_migrated_once (migration only)"
+   },
+   {
+    "id": "DB-03",
+    "behavior": "In the dbus_register vfunc, the provider registers one object implementing org.gnome.Shell.SearchProvider2 with this exact signature set: GetInitialResultSet(as terms)->(as results); GetSubsearchResultSet(as previous_results, as terms)->(as results); GetResultMetas(as identifiers)->(aa{sv} metas); ActivateResult(s identifier, as terms, u timestamp)->(); LaunchSearch(as terms, u timestamp)->(). It registers at the object path GApplication passes in, which is derived from the app id: /io/github/oscillatingjem/AgentSearch/SearchProvider. It then chains up. dbus_unregister unregisters the object. GApplication's own org.gtk.Application, org.freedesktop.Application and org.gtk.Actions are also exported at that path.",
+    "source": "provider.py:14-41,104-113",
+    "edge_cases": "The path must equal ObjectPath in the .ini. If the Rust app id changes, the derived path changes too.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "DB-04",
+    "behavior": "Every method call does hold() first and release() in a finally block. The 60 s inactivity timer therefore restarts after each reply, and the process exits 60 s after the last call. Calls run synchronously on the main loop, one at a time.",
+    "source": "provider.py:115-138",
+    "edge_cases": "A gateway fetch (up to 0.5 s) blocks every other call. An error reply still releases.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "DB-05",
+    "behavior": "GetInitialResultSet runs these steps in order. (1) reload_if_changed(). (2) q = query.parse(terms): the first '@x' term (length >1) becomes model, lowercased. The first '!alias' term whose alias is in EFFORT_ALIASES becomes effort. All other terms, joined by single spaces and stripped, form the prompt. (3) rows = ranker.rank(q, gateway.models() + app candidates, config), where app candidates are enabled apps whose 'requires' all resolve. (4) Store self.prompt = q.prompt and self.rows = {result_id: row} in rank order. (5) Return the ids in rank order.",
+    "source": "provider.py:61-67,120-121; query.py:234-245; catalog.py:16-21,81-82",
+    "edge_cases": "It returns [] when len(prompt) < min_chars, which includes token-only queries. Runs of spaces in the original query are lost. An invalid routing regex or a wrongly typed config value raises, giving a D-Bus Failed error rather than [].",
+    "covered_by_test": "ParseTests.test_cases, RankTests.* (ranking only, not the D-Bus layer)"
+   },
+   {
+    "id": "DB-06",
+    "behavior": "GetSubsearchResultSet ignores previous_results completely. It runs exactly the same full search as GetInitialResultSet on args[1] (the new terms), including the reload check and the gateway fetch.",
+    "source": "provider.py:122-123",
+    "edge_cases": "Results can contain ids that were not in previous_results.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "DB-07",
+    "behavior": "reload_if_changed runs before searches only. It compares signature() with the stored value; signature() is ((st_mtime_ns, st_size) or None for agents.toml, the same for secrets.env) in config_dir(). If they differ, it reloads the config, creates a new Gateway (which drops the 60 s model cache) and stores the new signature.",
+    "source": "provider.py:54-59; config.py:137-147",
+    "edge_cases": "If the reload raises, self.config keeps the old object but the signature is not updated. Every later search retries and fails with D-Bus Failed; there is no fallback to the last good config. A rewrite with the same size inside one mtime tick goes unnoticed. GetResultMetas and ActivateResult never reload.",
+    "covered_by_test": "SettingsTests.test_signature_changes_on_update (signature only)"
+   },
+   {
+    "id": "DB-08",
+    "behavior": "GetResultMetas walks the requested ids in order and silently skips any id that is not in the last search's rows. Each meta is an a{sv} with exactly four string ('s') keys. 'id': the id. 'name': row.title, i.e. candidate.name, plus ' · ' + model.capitalize() when a model was resolved (e.g. 'Agent · Opus'). 'description': '“' + last search prompt + '”', plus ' · ' + subtitle when the subtitle is non-empty. The subtitle is ['<effort> effort' if effort] + [', '.join(matched rule tags the candidate carries, in rule order)], joined by ' · '. 'gicon': g_icon_to_string(g_themed_icon_new(icon)).",
+    "source": "provider.py:69-84; ranker.py:286-300",
+    "edge_cases": "'gicon' is the bare icon name, except that a name starting with '.' becomes '. GThemedIcon .x .x-symbolic'. Every meta uses the latest search's prompt. Ids from older searches are dropped because their query hash differs. The provider does no markup escaping (the Shell escapes). Default icons: apps 'system-search-symbolic', gateway models model_info.icon or 'user-available-symbolic', Auto 'emblem-system-symbolic'. There are no clipboardText or icon keys.",
+    "covered_by_test": "RankTests.test_alias_with_model (title only)"
+   },
+   {
+    "id": "DB-09",
+    "behavior": "Result id = '<cid>|<model or empty>|<effort or empty>|<qk>'. cid is one of 'app:<id>', 'model:<base>', 'auto'. qk is the lowercase hex of BLAKE2s with digest_size=6 (12 hex chars) over the UTF-8 bytes of model + '\\0' + effort + '\\0' + prompt. Ids must change whenever the query changes (GNOME caches metas by id) and be stable for the same query and unique within one search. parse_result_id splits on '|' and keeps the first 3 fields; empty fields become None.",
+    "source": "ranker.py:280-284,303-310",
+    "edge_cases": "A '|' inside an app id breaks parsing; ids are not validated. The hash need not match the Python bytes exactly, but Blake2s with a 6-byte output is not truncated Blake2s-256; use blake2::Blake2sVar::new(6) if bit parity is wanted.",
+    "covered_by_test": "RankTests.test_result_ids_change_with_the_query, RankTests.test_result_id_round_trip"
+   },
+   {
+    "id": "DB-10",
+    "behavior": "ActivateResult re-parses the prompt from the terms argument (parse(terms).prompt), not from the stored prompt, then calls launch.activate. activate parses the id and finds the [[app]] whose 'app:<id>' equals cid. If copy_prompt is set, it copies the prompt with `wl-copy -- <prompt>`, or failing that `xclip -selection clipboard` on stdin. If command is non-empty, it builds argv = fill_command (an item is dropped when its placeholder is empty; a nested list is dropped whole if any placeholder in it is empty) and replaces 'requires' program names with absolute which() paths. It spawns with no shell, start_new_session, stdin/stdout/stderr on /dev/null, cwd = expanduser(cwd) and the inherited env, logs 'running <argv0> in <cwd>' and returns. Otherwise it fills the URL from the app url, or for model/auto from the gateway chat_url, with URL-encoded values and empty query params dropped. It opens the URL with Gio.AppInfo.launch_default_for_uri(url, None) and logs 'opening <url before ?>'. The timestamp is ignored and the reply is empty.",
+    "source": "provider.py:86-87,126-128; launch.py:103-201",
+    "edge_cases": "An unknown id, an empty url, or an empty chat_url is a silent success. These raise D-Bus Failed: missing cwd, no URI handler, an unknown {placeholder} (str.format KeyError). No launch context or activation token is passed. It uses the config from the last search. Children inherit the service env, which today includes PYTHONPATH and LLM_SEARCH_HOME.",
+    "covered_by_test": "UrlTests.*, CommandTests.* (launch helpers only)"
+   },
+   {
+    "id": "DB-11",
+    "behavior": "LaunchSearch is fire-and-forget. On the session bus it calls dest 'io.github.oscillatingjem.AgentSearch', path '/io/github/oscillatingjem/AgentSearch', interface org.freedesktop.Application, method ActivateAction with body ('search', [<' '.join(terms)>], {}) of type (sava{sv}). Flags are NONE, so auto-start is allowed, and the timeout is the default. No reply handler is attached and the method returns an empty reply at once. The raw terms, including @model and !effort tokens, are joined with single spaces, so the prompt box shows the whole query.",
+    "source": "provider.py:89-94,129-131",
+    "edge_cases": "Errors are silently lost, e.g. when the prompt box is not installed. The timestamp is dropped and platform_data is empty (no activation-token), so focus-stealing prevention may apply.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "DB-12",
+    "behavior": "An unknown method returns org.freedesktop.DBus.Error.UnknownMethod with the method name as the message. Any exception in a handler is logged with log.exception('%s failed', method), which includes a traceback, and returns org.freedesktop.DBus.Error.Failed with str(e). The service never exits because of one bad query.",
+    "source": "provider.py:132-136",
+    "edge_cases": "In Rust, handlers must not panic: catch_unwind, or map every Result to a Failed error.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "DB-13",
+    "behavior": "Logging uses logging.basicConfig(level=INFO, format='%(name)s: %(message)s') to stderr, with logger name 'llm-search'. Journal lines therefore start with 'llm-search: '. Each launch writes one INFO line containing argv[0] and cwd, or the URL without its query string; the prompt is never logged.",
+    "source": "provider.py:43,142; launch.py:96,195,200",
+    "edge_cases": "The docs tell users to run journalctl --user -b | grep -i -E 'llm-search|LlmSearchProvider', so keep the prefix.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "DB-14",
+    "behavior": "Gateway.models() returns [] when no url is set. Otherwise it returns the cached list for 60 s after a success and [] for 30 s after a failure. A fetch is GET <url, trailing '/' removed at load>/model/info, with 'Authorization: Bearer <secrets[key_env]>' when that secret is non-empty, timeout 0.5 s, response parsed as JSON .data. On OSError or ValueError it returns [] and starts the back-off. Gateway models come before apps in the candidate order.",
+    "source": "catalog.py:11-82; config.py:200-201",
+    "edge_cases": "Non-object JSON or entries that are not dicts raise AttributeError, which is not caught, so the search returns Failed. The fetch blocks the main loop.",
+    "covered_by_test": "RankTests.test_gateway_rows_include_auto_first (models_from_info only)"
+   },
+   {
+    "id": "PB-01",
+    "behavior": "The prompt box is an Adw.Application with application_id 'io.github.oscillatingjem.AgentSearch' and flags DEFAULT_FLAGS: a single instance, and later launches forward to the primary. It is normally D-Bus-activated through the rendered service with --gapplication-service, in which case GApplication waits for Activate/ActivateAction and does not activate on startup. Its Wayland app_id is the app id, which matches the .desktop id.",
+    "source": "prompt.py:135-137; share/io.github.oscillatingjem.AgentSearch.service.in:3; share/io.github.oscillatingjem.AgentSearch.desktop.in:7",
+    "edge_cases": "The Rust binary must accept --gapplication-service, which gio::Application handles when IS_SERVICE/IS_LAUNCHER are not set.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-02",
+    "behavior": "The constructor loads config (including the legacy migration), creates a Gateway, stores signature(), sets window and settings to None and the idle source to 0, and registers the actions.",
+    "source": "prompt.py:136-150",
+    "edge_cases": "A config load error kills the app before it registers.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-03",
+    "behavior": "Two actions are registered. 'search' takes parameter type 's' and calls open(text); text may be '', which clears the entry. 'preferences' takes no parameter and calls open_settings(). Both can be reached through org.freedesktop.Application.ActivateAction, org.gtk.Actions and `gapplication action`.",
+    "source": "prompt.py:145-150",
+    "edge_cases": "The app has no HANDLES_OPEN, so Open() is unsupported.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-04",
+    "behavior": "startup chains up, loads the CSS (PB-18) from a string into a Gtk.CssProvider, and adds it for the default display at STYLE_PROVIDER_PRIORITY_APPLICATION. It then calls self.hold() once. That hold is never released, so the app only exits through quit().",
+    "source": "prompt.py:152-158",
+    "edge_cases": "The CSS also applies to the settings window.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-05",
+    "behavior": "activate calls open(None), which keeps the previous entry text.",
+    "source": "prompt.py:160-161",
+    "edge_cases": "After Esc, the box reopens with the old text; after a send, the text was cleared.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-06",
+    "behavior": "open(text): cancel the idle timer; if config.signature() differs from the stored one, reload (config, new Gateway, signature); create the PromptWindow once, lazily, and reuse it for the life of the process; then summon(text).",
+    "source": "prompt.py:163-169",
+    "edge_cases": "Config changes are picked up only when the box opens or when the settings window saves, not on each keystroke.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-07",
+    "behavior": "summon(text): if text is not None, entry.set_text(text), which also triggers refresh; then refresh(), present(), entry.grab_focus(), and entry.set_position(-1), leaving the cursor at the end with nothing selected.",
+    "source": "prompt.py:122-128",
+    "edge_cases": "refresh runs twice when text is given.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-08",
+    "behavior": "The window is an Adw.ApplicationWindow: title 'Agent Search', resizable False, default size 680 x -1 (height follows content), hide_on_close True, no header bar. Its content is a vertical Gtk.Box (spacing 10, class 'prompt-box') holding three children. (1) A horizontal Box (spacing 6) with a Gtk.Entry: hexpand, class 'prompt-entry', placeholder 'Ask anything…  @model to choose · !high for effort' (two spaces after the U+2026 ellipsis, U+00B7 middle dots), primary icon 'system-search-symbolic'. Next to it a gear Gtk.Button: icon 'emblem-system-symbolic', tooltip 'Settings (Ctrl+,)', valign CENTER, classes 'flat' and 'circular', calling open_settings. (2) A Gtk.ListBox with selection BROWSE and classes 'boxed-list' and 'prompt-rows'. (3) A Gtk.Label 'Enter to send · ↑↓ to choose · Esc to close · Ctrl+, for settings' with classes 'dim-label' and 'caption', margin_top 4.",
+    "source": "prompt.py:28-61",
+    "edge_cases": "The window is created once and hidden, never destroyed. Alt+F4 hides it, which triggers PB-10.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-09",
+    "behavior": "A window key controller in CAPTURE phase handles four cases. Escape (any modifiers) calls dismiss(). keyval 'comma' with CONTROL_MASK in state (other modifiers not excluded) calls open_settings(). Down or Tab (any modifiers) calls move(+1). Up or ISO_Left_Tab calls move(-1). These keys are consumed and never reach the entry. All other keys propagate, so Enter and KP_Enter reach the entry's 'activate'.",
+    "source": "prompt.py:63-65,107-120",
+    "edge_cases": "Tab never moves focus, so the gear cannot be reached by keyboard. Ctrl+Tab also moves the selection.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-10",
+    "behavior": "Focus-out dismiss: on notify::is-active, if the window is not active, call dismiss(). This works like a spotlight: clicking elsewhere closes the box.",
+    "source": "prompt.py:67",
+    "edge_cases": "Esc, a send or Alt+F4 call dismiss twice (harmless, because start_idle_timer cancels first). See bug note on the ordering with open_settings.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-11",
+    "behavior": "refresh() runs on every entry 'changed'. It removes all rows, then computes q = parse(entry.get_text().split()) and rank(q, candidates(config, gateway), config). Each Row becomes an Adw.ActionRow: title = markup-escaped row.title, subtitle = markup-escaped row.subtitle, activatable, with a prefix Gtk.Image(icon_name=candidate.icon, pixel_size=32), and keeps result_id. The list and the hint are visible only when there are rows. The first row is selected.",
+    "source": "prompt.py:39,72-85",
+    "edge_cases": "Unlike the Shell metas, rows do not show the quoted prompt. After the cache expires, a keystroke can block up to 0.5 s on the gateway. An exception (e.g. a bad regex) leaves the list empty.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-12",
+    "behavior": "Sending: Enter (entry 'activate') runs the selected row, or does nothing if there are no rows. 'row-activated' (a single click in BROWSE mode) runs that row. run(row): prompt = parse(entry text split).prompt; launch.activate(config, row.result_id, prompt); entry.set_text(''); dismiss().",
+    "source": "prompt.py:40,45,87-96",
+    "edge_cases": "If activate raises, the entry is not cleared and the window stays open.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-13",
+    "behavior": "move(step): index = (selected index, or -1) + step; target = row at max(0, index); select it if it exists. There is no wrap: Up at the top stays on row 0, and Down past the end stays put.",
+    "source": "prompt.py:98-103",
+    "edge_cases": "With no rows it is a no-op.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-14",
+    "behavior": "dismiss(): window.set_visible(False), then app.start_idle_timer().",
+    "source": "prompt.py:130-132",
+    "edge_cases": "The entry text is kept.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-15",
+    "behavior": "Resident and idle behavior. start_idle_timer first cancels any existing timer. If any window in app.get_windows() is visible, it starts no timer. Otherwise minutes = config.prompt_idle_minutes (default 30.0): if minutes <= 0, quit() immediately; else timeout_add_seconds(int(minutes*60)), and quit() when it fires. open() and open_settings() cancel the timer.",
+    "source": "prompt.py:186-204; config.py:68,204",
+    "edge_cases": "int() truncates, so 0.01 minutes gives 0 s. Windows without an application (ShortcutDialog) do not count. If the process was D-Bus-started but no window was ever closed (e.g. by a bus introspection, or an action that failed), the timer is never armed and the process stays resident indefinitely.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-16",
+    "behavior": "open_settings(): cancel the idle timer; hide the prompt window if visible; if there is no settings window or it is not visible, construct a new SettingsWindow; present() it and return it.",
+    "source": "prompt.py:171-178",
+    "edge_cases": "Opening settings from the box hides the box, and the box does not come back when settings closes. A visible settings window is reused without being rebuilt.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-17",
+    "behavior": "reload() reloads config, creates a new Gateway and updates the signature. The settings window calls it after every successful save.",
+    "source": "prompt.py:180-184",
+    "edge_cases": "It raises on invalid TOML, and nothing catches it in the callers.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "PB-18",
+    "behavior": "The CSS text is exactly: '.prompt-box { padding: 12px; }', '.prompt-entry { font-size: 1.35em; min-height: 44px; }', '.prompt-rows row { padding: 6px 4px; }'.",
+    "source": "prompt.py:21-25",
+    "edge_cases": "Requires GTK >= 4.12 (load_from_string).",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-01",
+    "behavior": "The settings window is an Adw.Window: application=app, title 'Agent Search Settings', default size 600x680. Its content is an Adw.ToolbarView whose top bar is an Adw.HeaderBar with title_widget = Adw.ViewSwitcher(stack, policy WIDE), and whose content is an Adw.ToastOverlay around an Adw.ViewStack.",
+    "source": "prefs.py:19-33",
+    "edge_cases": "There is no bottom ViewSwitcherBar, so the layout is not adaptive. The minimum versions are libadwaita 1.5 (AlertDialog) and 1.4 (SpinRow, ToolbarView).",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-02",
+    "behavior": "build_pages() remembers the visible child name, removes every page, and adds three pages in this order: ('general', 'General', 'preferences-system-symbolic'), ('agents', 'Agents', 'system-users-symbolic'), ('gateway', 'Gateway', 'network-server-symbolic'). It then restores the visible page.",
+    "source": "prefs.py:47-56",
+    "edge_cases": "A rebuild discards unsaved text in entry rows.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-03",
+    "behavior": "A key controller in the default bubble phase closes the window on Escape, whatever the modifiers.",
+    "source": "prefs.py:35-37,75-79",
+    "edge_cases": "Ctrl+, does nothing here.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-04",
+    "behavior": "close-request: cancel the file monitor, schedule GLib.idle_add(app.start_idle_timer) to run once, and return False so the window is destroyed rather than hidden.",
+    "source": "prefs.py:38-39,70-73",
+    "edge_cases": "A pending 300 ms refresh timer is not removed and may fire on the dead window.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-05",
+    "behavior": "Live refresh: a Gio file monitor watches <dir>/agents.toml with flag WATCH_MOVES; any 'changed' event calls schedule_refresh(). That adds one 300 ms timeout if none is pending. refresh_from_disk() then checks whether signature(dir) differs from app.signature. Equal means the change came from our own save (because _write already reloaded), so nothing happens. Different means app.reload(), build_pages(), and the toast 'Updated from agents.toml'.",
+    "source": "prefs.py:41-45,58-68",
+    "edge_cases": "Only agents.toml is watched, not secrets.env or gsettings. Atomic rename saves from editors fire the monitor (MOVED_IN/CREATED). Opening the prompt box also updates app.signature and can mask an external edit. Same-size edits inside one mtime tick are missed.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-06",
+    "behavior": "Saving: save(section, key, v) and save_app(app_id, key, v) produce one edit tuple, (section, key, None, v) or ('app', key, app_id, v), and pass it to config.update(edits, dir). An EditError shows the toast 'Couldn't save: <msg>'. An OSError shows 'Couldn't save: <strerror>'. On success it calls app.reload(); there is no success toast.",
+    "source": "prefs.py:87-102",
+    "edge_cases": "After a failed save the widget keeps showing the unsaved value; nothing reverts it. Other exceptions are not caught, e.g. UnicodeDecodeError, or a TOMLDecodeError in reload after an outside edit.",
+    "covered_by_test": "SettingsTests.* (config.update)"
+   },
+   {
+    "id": "SW-07",
+    "behavior": "toast(text) adds Adw.Toast(title=markup-escaped text, timeout=3).",
+    "source": "prefs.py:104-105",
+    "edge_cases": "",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-08",
+    "behavior": "spin_row(title, subtitle, value, lower, upper, step, cb, digits=0) uses Adw.SpinRow.new_with_range(lower, upper, step), then sets title, subtitle, digits and the value before connecting the handler, so building the row never saves. On every notify::value it calls cb(value if digits else int(value)), so each click or step rewrites agents.toml.",
+    "source": "prefs.py:109-116",
+    "edge_cases": "An out-of-range value in the file is clamped in the display only and not saved. A fractional value in a digits=0 row is shown rounded and truncated on the next change.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-09",
+    "behavior": "entry_row(title, text, cb, password=False) uses Adw.PasswordEntryRow or Adw.EntryRow with show_apply_button=True and set_text(text). The 'apply' signal calls cb(text.strip()). Nothing is saved while typing.",
+    "source": "prefs.py:118-122",
+    "edge_cases": "The row keeps the unstripped text after apply.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-10",
+    "behavior": "button_row(title, subtitle, label, cb, icon=None) is an Adw.ActionRow(title, subtitle) with a suffix Gtk.Button (valign CENTER, tooltip=label). With an icon, the button gets that icon name plus the 'flat' class; without one, it shows label as text. It is set as the row's activatable widget, so clicking the row clicks the button.",
+    "source": "prefs.py:124-135",
+    "edge_cases": "Titles and subtitles are interpreted as markup.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-11",
+    "behavior": "General page, group 'Prompt Box'. First, an ActionRow 'Keyboard Shortcut', subtitle 'Opens the prompt box from anywhere', with suffixes Gtk.ShortcutLabel(valign CENTER, disabled_text 'None') and Gtk.Button 'Change…' (valign CENTER), which presents ShortcutDialog. The label is filled from shortcut.get(); a GLib.Error gives ''. Second, a SpinRow 'Keep Running After Closing', subtitle 'Minutes; opens instantly within this time. 0 quits at once', value [prompt] idle_minutes, range 0..480, step 5, digits 0, saving ('prompt', 'idle_minutes', int).",
+    "source": "prefs.py:139-156,181-185",
+    "edge_cases": "The shortcut row itself is not activatable.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-12",
+    "behavior": "General page, group 'Results' (description 'Used by both the prompt box and GNOME search'), three int SpinRows. 'Minimum Characters' / 'Shorter prompts show no rows', range 1..20 step 1, saves ('search', 'min_chars'). 'Rows Shown' / 'GNOME search shows about five', range 1..10 step 1, saves ('search', 'max_rows'). 'Low Effort Up To' / 'Prompts with this many words or fewer get low effort', range 0..50 step 1, saves ('routing', 'low_effort_max_words').",
+    "source": "prefs.py:158-167",
+    "edge_cases": "The file may hold 0 or values above the range; the rows clamp them.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-13",
+    "behavior": "General page, group 'Configuration Files', three button rows. 'agents.toml' / 'Add agents, aliases and ranking rules. Every setting is explained in the file', label 'Open', icon 'document-edit-symbolic': opens the file:// URI of <dir>/agents.toml with launch_default_for_uri. 'Restore Defaults' / 'Puts the settings on this page back to factory values. Agents, rules, the gateway and the shortcut are kept', a text button 'Restore…' that opens the confirm dialog. 'Documentation' / 'Search syntax, providers and troubleshooting', label 'Open', icon 'help-browser-symbolic': opens https://github.com/oscillatingjem/gnome-llm-search-provider/blob/main/docs/USAGE.md.",
+    "source": "prefs.py:16,169-179,194-195",
+    "edge_cases": "A missing URI handler raises an uncaught GLib.Error.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-14",
+    "behavior": "Restore uses an Adw.AlertDialog with heading 'Restore Defaults?' and body 'Minimum characters, rows shown, the low-effort limit and how long the box keeps running go back to factory values in agents.toml. Your agents, aliases, ranking rules, gateway and shortcut are kept.' Its responses are 'cancel'/'Cancel' and 'restore'/'Restore' (DESTRUCTIVE), with default response 'cancel', presented on the window. Only 'restore' acts. It calls config.restore_defaults(dir), which is a single update of [search] min_chars=3, [search] max_rows=5, [prompt] idle_minutes=30.0 (a float, written '30.0'), and [routing] low_effort_max_words=8. On error the toast is 'Couldn't restore defaults: <strerror or msg>'. On success: app.reload(), self.close(), then app.open_settings() builds a new window (General page) and toasts 'Defaults restored'.",
+    "source": "prefs.py:197-218; config.py:150-162",
+    "edge_cases": "Missing tables are appended. Agents, aliases, rules, the gateway and the shortcut are untouched.",
+    "covered_by_test": "SettingsTests.test_restore_defaults_resets_general_but_keeps_agents_rules_and_gateway"
+   },
+   {
+    "id": "SW-15",
+    "behavior": "Agents page. Group 'Agents', description 'Turn agents on or off, and change how they rank. Higher priority ranks higher.', has one row per [[app]] in file order, including disabled and not-installed apps. A separate untitled group holds the button row 'Add an Agent' / 'New agents are added in agents.toml, which has ready-made examples', label 'Open', icon 'list-add-symbolic', which opens agents.toml.",
+    "source": "prefs.py:222-235",
+    "edge_cases": "There is no add, delete or rename in the UI yet; that is the planned next feature.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-16",
+    "behavior": "Agent row subtitle, in order of precedence. If any 'requires' program fails launch.which (PATH + ~/.local/bin + ~/bin): 'Not installed: ' + ', '.join(missing). Else, if command is non-empty: 'Runs ' + (' '.join(top-level str items not containing '{'))[:60]. Else: 'Opens ' + url.split('?')[0].",
+    "source": "prefs.py:238-244",
+    "edge_cases": "The 60-character cut applies to the joined string, counts code points and adds no ellipsis. Nested lists are skipped. An empty url gives 'Opens '.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-17",
+    "behavior": "Each agent is an Adw.ExpanderRow: title and subtitle markup-escaped, show_enable_switch True, enable_expansion = app.enabled. notify::enable-expansion saves ('app', 'enabled', bool) for that id. Children: SpinRow 'Priority' / 'Added to its ranking score', range -10..10, step 0.5, digits 1, saving a float ('app', 'priority'). Only when command is non-empty: EntryRow 'Working Folder' (text = cwd) whose apply saves cwd = (value or '~'), with a suffix flat Button 'folder-open-symbolic' (tooltip 'Choose Folder') that opens the folder chooser. Then an ActionRow 'Good At' with subtitle '<', '.join(tags) or none> (edit in agents.toml)'.",
+    "source": "prefs.py:245-260",
+    "edge_cases": "A disabled agent cannot be expanded, so its priority and cwd cannot be edited until it is switched on. URL agents have no cwd row.",
+    "covered_by_test": "SettingsTests.test_edits_apply_and_keep_every_comment (file side)"
+   },
+   {
+    "id": "SW-18",
+    "behavior": "The folder chooser is a Gtk.FileDialog(title 'Working Folder for <name>') using select_folder(parent=window). A GLib.Error, including cancel, does nothing. Otherwise path = folder.get_path(); if it starts with GLib.get_home_dir() as a plain string prefix, it becomes '~' + rest. Then row.set_text(path) and save cwd.",
+    "source": "prefs.py:262-277",
+    "edge_cases": "Because the prefix check has no separator, /home/jem2 becomes '~2'. get_path() can be None for a non-native folder.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-19",
+    "behavior": "Gateway page. Group 'LiteLLM Gateway', description 'Optional. Connect a LiteLLM proxy to list API models (OpenAI, Anthropic API, LM Studio, Ollama…) as rows. Leave the URL empty to turn it off.' It holds these rows. EntryRow 'Gateway URL (e.g. http://127.0.0.1:4000)' (text = url with trailing '/' stripped) saves ('gateway', 'url'). EntryRow 'Chat URL ({model} and {prompt} are filled in)' saves ('gateway', 'chat_url'). EntryRow 'Auto Model' saves ('gateway', 'auto_model'). PasswordEntryRow 'Gateway Key (saved to secrets.env as <key_env>)' (text = the current secret) calls save_key. Button row 'Connection' / 'Not tested' / 'Test' runs the test. A second group holds 'Setup Guide' / 'Running LiteLLM and a chat UI, and adding providers', label 'Open', icon 'help-browser-symbolic', opening docs/PROVIDERS.md on GitHub.",
+    "source": "prefs.py:281-304",
+    "edge_cases": "Saving an empty value writes ''. A missing [gateway] table is appended. key_env is not editable in the UI.",
+    "covered_by_test": "SettingsTests.test_missing_gateway_table_is_added"
+   },
+   {
+    "id": "SW-20",
+    "behavior": "save_key(v) calls config.set_secret(key_env, v, dir). set_secret drops every line whose strip().partition('=')[0].strip() equals the key (comment lines are kept), appends 'KEY=value' if v is non-empty, and writes '\\n'.join(lines) + '\\n' via os.open(O_WRONLY|O_CREAT|O_TRUNC, 0o600), followed by chmod 600. OSError shows the toast 'Couldn't save the key: <strerror>'. On success: app.reload() and the toast 'Key saved', or 'Key removed' when v is empty.",
+    "source": "prefs.py:306-313; config.py:121-134",
+    "edge_cases": "The write is not atomic. The value is written raw, unquoted. On read, read_env_file strips surrounding quotes and whitespace, so a key that starts or ends with ' or \" is mangled.",
+    "covered_by_test": "SettingsTests.test_set_secret_keeps_other_lines_and_mode"
+   },
+   {
+    "id": "SW-21",
+    "behavior": "The test uses the saved config only. With an empty url the subtitle becomes 'No gateway URL set'. Otherwise it runs a fresh Gateway(c).models() synchronously (no cache). If models came back: 'Connected: <n> models (<first 4 names, ', '><'…' if n>4>)'. If not: 'Couldn't reach <url>, or it lists no models'. Subtitles are markup-escaped.",
+    "source": "prefs.py:315-325",
+    "edge_cases": "A typed but unapplied URL is not tested. The Auto model counts toward n. The UI freezes for up to 0.5 s. Non-dict JSON raises uncaught.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-22",
+    "behavior": "ShortcutDialog is an Adw.Window: transient_for the settings window, modal, title 'Set Shortcut', resizable False, default 420 x -1, and no application. Its content is a ToolbarView with an Adw.HeaderBar on top and an Adw.StatusPage (icon 'input-keyboard-symbolic', title 'Press the New Shortcut', description 'Esc to cancel · Backspace to remove the shortcut', class 'compact'). It has a key controller in CAPTURE phase.",
+    "source": "prefs.py:328-343",
+    "edge_cases": "It does not count toward the idle check.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-23",
+    "behavior": "Capture rules, with mods = state & Gtk.accelerator_get_default_mod_mask(). Escape with no mods closes the dialog. BackSpace with no mods calls set_shortcut('') (removes the shortcut) and closes. A keyval in MODIFIER_KEYS (Shift_L/R, Control_L/R, Alt_L/R, Super_L/R, Meta_L/R, Hyper_L/R, ISO_Level3_Shift, Caps_Lock) is consumed while the dialog keeps waiting. Any other key with no mods is consumed and ignored. Anything else calls set_shortcut(Gtk.accelerator_name(Gdk.keyval_to_lower(keyval), mods)) and closes. Every key is consumed.",
+    "source": "prefs.py:345-365",
+    "edge_cases": "On GTK 4.22, accelerator_name gives '<Control><Super>space' (not '<Primary>'). Shift+letter is accepted as '<Shift>a'. Plain F-keys and media keys are rejected. There is no conflict check.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-24",
+    "behavior": "set_shortcut(b) calls shortcut.set(b). RuntimeError or GLib.Error shows the toast 'Couldn't set the shortcut: <e>'. It always finishes with refresh_shortcut(), which sets the label from shortcut.get().",
+    "source": "prefs.py:181-192",
+    "edge_cases": "",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SW-25",
+    "behavior": "On-disk edits through config.update and toml_edit.apply. The file is read (missing gives ''). Each edit is applied to the text. If the text is unchanged, nothing is written. Otherwise the new text goes to '<dir>/.agents.toml.tmp', which gets the existing file's permission bits, and is renamed over agents.toml. For a [table] key: the first line matching ^\\s*key\\s*=\\s* inside that table's span (up to the next header) has only its value replaced; the indent, the original '=' spacing and the trailing whitespace and comment are kept. A missing key is inserted on the line right after the header. A missing table is appended as '', '[table]  # added by the settings window', 'key = value'. For [[app]] by id: the block whose 'id = ' value equals the id is used, and a missing key goes right after the id line. Value formatting: bools 'true'/'false'; ints and floats via Python repr ('2.5', '30.0'); strings via json.dumps. When it fails, the file is left untouched: an unknown id raises EditError \"no [[app]] with id '<id>'\"; a multi-line existing value raises '<key> is a multi-line value; edit it in the file'; after all edits the result is parsed and every value read back, and a parse failure raises 'the edit would break the file: <msg>' while a mismatch raises '<table>.<key> reads back as <got!r>, not <value!r>'. Lines are joined with '\\n' plus a final '\\n'.",
+    "source": "config.py:101-118; toml_edit.py:225-345",
+    "edge_cases": "Comments and untouched lines must stay byte-identical. With toml_edit in Rust, copy the old value's decor (suffix comment) onto the new value, and insert missing keys after the header or id line, not at the end of the table.",
+    "covered_by_test": "SettingsTests.test_edits_apply_and_keep_every_comment, test_only_the_edited_lines_change, test_missing_gateway_table_is_added, test_unknown_agent_is_refused_and_file_untouched, test_multiline_values_are_refused"
+   },
+   {
+    "id": "SC-01",
+    "behavior": "Schemas: 'org.gnome.settings-daemon.plugins.media-keys' (key 'custom-keybindings', type as) and the relocatable 'org.gnome.settings-daemon.plugins.media-keys.custom-keybinding' (keys name, command, binding) at path '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/llm-search/'. 'Available' means both schemas are found by a recursive lookup in the default SettingsSchemaSource.",
+    "source": "shortcut.py:10-17",
+    "edge_cases": "Check availability first: Gio.Settings.new on a missing schema aborts the process.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SC-02",
+    "behavior": "get() returns '' when the schemas are unavailable or the path is not in custom-keybindings. Otherwise it returns the 'binding' string at the path, e.g. '<Primary><Super>space'.",
+    "source": "shortcut.py:20-24",
+    "edge_cases": "The binding is returned as stored, even if it does not parse.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SC-03",
+    "behavior": "set(binding) with a non-empty binding sets name = 'Agent Search' (always), command = '<$HOME>/.local/bin/llm-search prompt' (absolute, no tilde) and binding = binding. Only after that does it append the path to the end of custom-keybindings, if it is not there yet.",
+    "source": "shortcut.py:27-43",
+    "edge_cases": "This name differs from the installer, which uses --name. When the schemas are unavailable it raises RuntimeError(\"GNOME's keyboard settings schemas aren't installed\").",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "SC-04",
+    "behavior": "set('') removes the path from custom-keybindings, keeping the order of the other entries, and resets name, command and binding at the path.",
+    "source": "shortcut.py:34-38",
+    "edge_cases": "In Rust, call gio::Settings::sync() before quit() so the dconf writes are not lost when idle_minutes = 0.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-01",
+    "behavior": "Dispatch: no argument or 'help', '-h', '--help' prints the usage (exit 0). 'install', 'uninstall', 'status' (extra args ignored), 'query', 'test', and 'prompt' or its undocumented alias 'open' run their commands. Anything else prints the usage and exits 2. The script runs with set -euo pipefail. warn prints 'warning: <m>' to stderr; die prints 'error: <m>' to stderr and exits 1.",
+    "source": "bin/llm-search:4,29-32,358-367",
+    "edge_cases": "",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-02",
+    "behavior": "Paths: ROOT is the parent of the real (readlink -f) script directory. LLM_SEARCH_HOME=${LLM_SEARCH_HOME:-$HOME/.llm-search}; DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}; BIN_HOME=$HOME/.local/bin (XDG_BIN_HOME is not honored); COPY_DIR=$DATA_HOME/llm-search; RENDER_DIR=$LLM_SEARCH_HOME/state/install; XDG_DIR=$LLM_SEARCH_HOME/state/xdg; ENVD_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/environment.d/60-llm-search.conf; ENVD_GENERATOR=/usr/lib/systemd/user-environment-generators/30-systemd-environment-d-generator.",
+    "source": "bin/llm-search:6-25",
+    "edge_cases": "",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-03",
+    "behavior": "Usage text exactly as in the heredoc. It lists install [--copy] [--dry-run] [--name NAME] [--shortcut BINDING] with the descriptions of --copy, --name and --shortcut; uninstall [--purge] [--dry-run]; status; query WORDS...; prompt [TEXT...]; test; and the line 'Config home: $LLM_SEARCH_HOME (currently <path>)'.",
+    "source": "bin/llm-search:336-356",
+    "edge_cases": "The 'open' alias and the '--category-name' option are not documented.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-04",
+    "behavior": "install option parsing: --copy; --dry-run; --name or --category-name NAME (default 'Agent Search'); --shortcut BINDING. A missing or empty value hits bash ${2:?} and exits 1. An unknown option gives 'error: unknown option for install: <opt>'. Then, if LLM_SEARCH_HOME or ROOT contains a space: 'error: paths with spaces are not supported'.",
+    "source": "bin/llm-search:140-154",
+    "edge_cases": "Spaces in HOME, DATA_HOME or COPY_DIR are not checked.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-05",
+    "behavior": "Requirement checks. find_python takes the first of $PYTHON, /usr/bin/python3 and `command -v python3` that is executable and >= 3.11; none found: warning 'Python 3.11 or newer is required', then exit 1. If Gio cannot be imported: 'PyGObject (Gio) is missing. Install it with: <hint>', then exit 1. The hint comes from /etc/os-release ID/ID_LIKE: fedora|rhel 'sudo dnf install python3-gobject'; debian|ubuntu 'sudo apt install python3-gi gir1.2-glib-2.0'; arch 'sudo pacman -S python-gobject'; suse|opensuse 'sudo zypper install python3-gobject'; otherwise a generic line. Non-fatal: 'GNOME Shell not found; the provider only works in GNOME'; 'xdg-open not found (package xdg-utils)'; and the stdout line 'note: install wl-clipboard to enable the copy-prompt option' when neither wl-copy nor xclip exists.",
+    "source": "bin/llm-search:36-75",
+    "edge_cases": "GTK 4 and libadwaita typelibs are not checked. For Rust this becomes a check of the binary and the runtime libraries.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-06",
+    "behavior": "install prints 'Installing llm-search' and '  config home: <home>'. With --copy, CODE_ROOT=COPY_DIR: it prints '  copying code to <dir>', runs mkdir -p and cp -r ROOT/{bin,src,share,examples} into it (overlay, nothing deleted). Without it, CODE_ROOT=ROOT and it prints '  code runs from <ROOT>'. CODE_ROOT feeds @SRC@ and the ~/.local/bin/llm-search link. Templates and examples are always read from $ROOT.",
+    "source": "bin/llm-search:157-168",
+    "edge_cases": "",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-07",
+    "behavior": "Config seeding: mkdir -p config, state and state/install. For each file in ROOT/examples/config/* (agents.toml, and secrets.env.example installed as secrets.env): if it exists, print '  keeping existing config/<name>'; else print '  creating config/<name>' and copy it. Then chmod 600 config/secrets.env, every time.",
+    "source": "bin/llm-search:170-183",
+    "edge_cases": "A user's file is never overwritten. The new file is briefly mode 644 before the chmod.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-08",
+    "behavior": "Legacy cleanup (remove_old_install, run by both install and uninstall), for the old app id io.github.oscillatingjem.LlmSearchProvider. If any of these is a symlink it is removed with the message '  removed old <path>': $XDG_DIR/gnome-shell/search-providers/OLD.search-provider.ini, $DATA_HOME/gnome-shell/search-providers/OLD.search-provider.ini, $DATA_HOME/dbus-1/services/OLD.service, $DATA_HOME/applications/OLD.desktop, $DATA_HOME/icons/hicolor/scalable/apps/OLD.svg. Then rm -f $RENDER_DIR/OLD.*.",
+    "source": "bin/llm-search:9,91-100",
+    "edge_cases": "Regular files are left alone.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-09",
+    "behavior": "Rendering: sed globally replaces @SRC@ with $CODE_ROOT/src, @HOME@ with $LLM_SEARCH_HOME, @PYTHON@ with $PY, @BIN@ with $BIN_HOME/llm-search, and @CATEGORY@ with the --name value. Outputs in RENDER_DIR: io.github.oscillatingjem.AgentSearch.SearchProvider.service, io.github.oscillatingjem.AgentSearch.service, io.github.oscillatingjem.AgentSearch.desktop. The .search-provider.ini and .svg are copied verbatim. Everything is re-rendered on every install. A dry run prints '  would render <basename>'.",
+    "source": "bin/llm-search:132-138,185-191",
+    "edge_cases": "The sed replacement is not escaped (see bugs). In Rust, @SRC@ and @PYTHON@ go away; @HOME@, @BIN@ and @CATEGORY@ stay.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-10",
+    "behavior": "Symlinks (target -> source). The same list drives install, uninstall and status: $XDG_DIR/gnome-shell/search-providers/io.github.oscillatingjem.AgentSearch.search-provider.ini -> $RENDER_DIR/<same>; $DATA_HOME/dbus-1/services/io.github.oscillatingjem.AgentSearch.SearchProvider.service -> $RENDER_DIR/<same>; $DATA_HOME/dbus-1/services/io.github.oscillatingjem.AgentSearch.service -> $RENDER_DIR/<same>; $DATA_HOME/applications/io.github.oscillatingjem.AgentSearch.desktop -> $RENDER_DIR/<same>; $DATA_HOME/icons/hicolor/scalable/apps/io.github.oscillatingjem.AgentSearch.svg -> $RENDER_DIR/<same>; $HOME/.local/bin/llm-search -> $CODE_ROOT/bin/llm-search. For each: mkdir -p the parent; if the target exists and is not a symlink, warn '<target> exists and is not a symlink; leaving it alone' and skip it; otherwise ln -sfn and print '  linked <target>'.",
+    "source": "bin/llm-search:80-89,193-201",
+    "edge_cases": "A dangling symlink is replaced. The ini file name uses APP_ID, not PROVIDER_ID.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-11",
+    "behavior": "environment.d: the line is 'XDG_DATA_DIRS=<XDG_DIR expanded>:${XDG_DATA_DIRS:-/usr/local/share/:/usr/share/}', where the ${...} part stays literal for systemd. If ENVD_FILE has that exact full line, print '  keeping <file>'. Otherwise print '  writing <file>', mkdir -p, and overwrite the file with '# Added by llm-search: lets GNOME Shell find its search provider.\\n<line>\\n'.",
+    "source": "bin/llm-search:227-237",
+    "edge_cases": "Any other content in the file is lost on rewrite. A Rust installer must recognise this exact line so existing installs print 'keeping'.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-12",
+    "behavior": "environment.d safety check. It is skipped in dry runs and when the generator is not executable. Otherwise the installer runs ENVD_GENERATOR with stderr discarded and extracts the XDG_DATA_DIRS= value. If ':<dirs>:' lacks ':<XDG_DIR>:' or lacks ':/usr/share/:', it runs rm -f ENVD_FILE and dies with \"environment.d check failed (XDG_DATA_DIRS would be '<dirs>'); removed <file>\" (exit 1). By then the links already exist; the shortcut and restart steps have not run.",
+    "source": "bin/llm-search:238-246",
+    "edge_cases": "The generator expands variables against the installer's own environment, not a clean login.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-13",
+    "behavior": "0.1.0 legacy cleanup: if $DATA_HOME/gnome-shell/search-providers/io.github.oscillatingjem.AgentSearch.search-provider.ini is a symlink, remove it and print '  removed unused <path>'.",
+    "source": "bin/llm-search:247-250",
+    "edge_cases": "",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-14",
+    "behavior": "install_shortcut runs only with --shortcut. Without gsettings it warns 'gsettings not found; skipping the shortcut' and returns 0. It reads list = `gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings`. If the list does not contain the path: '@as []' or '[]' becomes \"['<path>']\", otherwise \", '<path>'\" is inserted before the final ']'; then gsettings set. Next, on '<schema>:<path>' it sets name '<--name>', command '$HOME/.local/bin/llm-search prompt' and binding '<BINDING verbatim>'. It prints '  shortcut <b> opens the prompt box (change it in Settings > Keyboard > Custom Shortcuts)'.",
+    "source": "bin/llm-search:104-119",
+    "edge_cases": "The list is updated before the keys, the opposite order to shortcut.py. The binding is not validated. Without --shortcut, an existing shortcut is left untouched.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-15",
+    "behavior": "Restart and refresh: `pkill -f -- \"-m llm_searc[h]\" || true` kills the running Python provider and prompt box so the new code and config load. Then, if update-desktop-database exists, `update-desktop-database -q $DATA_HOME/applications`.",
+    "source": "bin/llm-search:209-211",
+    "edge_cases": "After the migration this must kill both the legacy Python processes and the Rust binaries. Otherwise an old process keeps owning the bus name until idle (60 s for the provider, up to 30 min for the box).",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-16",
+    "behavior": "The final message is 'Done. Next steps:' followed by four steps. (1) Log out and back in. (2) 'Settings → Search: turn on \"<name>\"…'. (3) With a shortcut: 'Open the prompt box with <b>, or from the app grid (\"<name>\").'; without one, the app-grid line plus \"./install.sh --shortcut '<Primary><Super>space'\". (4) 'Edit <home>/config/agents.toml …'. Last, '  note: <BIN_HOME> is not on your PATH' when it is not.",
+    "source": "bin/llm-search:213-224",
+    "edge_cases": "",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-17",
+    "behavior": "uninstall takes --purge and --dry-run; an unknown option gives 'error: unknown option for uninstall: <opt>'. Every link target that is a symlink (wherever it points) is removed with '  removed <target>'. Then remove_old_install and remove_shortcut. If ENVD_FILE exists and contains 'llm-search' anywhere, it is removed with '  removed <file>'. Then the same pkill as install. With --purge: rm -rf $LLM_SEARCH_HOME $COPY_DIR and '  removed <home>'. Without it: rm -rf $RENDER_DIR and '  kept your config in <home> (use --purge to remove it)'. Last: 'Log out and back in to remove the category from search.'",
+    "source": "bin/llm-search:253-282",
+    "edge_cases": "Without --purge, COPY_DIR and the empty state/xdg stay behind. update-desktop-database is not run.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-18",
+    "behavior": "remove_shortcut: without gsettings, or when the list does not contain the path, it returns. Otherwise it computes the new list with `python3 -I` (ast.literal_eval of the list after stripping '@as ', path filtered out, printed as a Python list repr) and runs gsettings set. Then `gsettings reset-recursively <schema>:<path>` and '  removed the keyboard shortcut'.",
+    "source": "bin/llm-search:121-130",
+    "edge_cases": "Needs python3 on PATH, which a Rust port must drop.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-19",
+    "behavior": "status prints 'config home: <home>'. For each link it prints '  ok      <target>' if it is a symlink, else '  missing <target>'. For the provider ('search provider') and the app ('prompt box') it checks org.freedesktop.DBus.NameHasOwner through gdbus and prints '<label>: running' or '<label>: not running (starts when needed)'. Last it prints 'shortcut: <gsettings get binding output, quotes included>' or 'shortcut: none'.",
+    "source": "bin/llm-search:286-309",
+    "edge_cases": "A dangling link counts as ok. environment.d and XDG_DATA_DIRS are not checked.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-20",
+    "behavior": "test runs `<python> -m unittest discover -s $ROOT/tests \"$@\"`. Without Python 3.11 it fails with 'error: Python 3.11+ not found'.",
+    "source": "bin/llm-search:311-314",
+    "edge_cases": "The comments in users' agents.toml tell them to run `llm-search test`, so keep the subcommand (e.g. as a config check).",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-21",
+    "behavior": "query WORDS runs gdbus call --session --dest io.github.oscillatingjem.AgentSearch.SearchProvider --object-path /io/github/oscillatingjem/AgentSearch/SearchProvider --method org.gnome.Shell.SearchProvider2.GetInitialResultSet \"['w1','w2',…]\". It prints gdbus's output, e.g. \"(['app:claude-chat||low|<hash>', …],)\", and exits with gdbus's status.",
+    "source": "bin/llm-search:316-321",
+    "edge_cases": "Words are not quote-escaped. With no words it sends [''].",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-22",
+    "behavior": "prompt/open [TEXT...]. When gapplication is available: with TEXT, it execs `gapplication action io.github.oscillatingjem.AgentSearch search <GVariant text of ' '.join(TEXT)>`, the text produced by GLib.Variant('s',…).print_(False); without TEXT, it execs `gapplication launch io.github.oscillatingjem.AgentSearch`. gapplication forwards DESKTOP_STARTUP_ID and XDG_ACTIVATION_TOKEN from the env as platform data. Without gapplication it runs PYTHONPATH=$ROOT/src exec python -m llm_search.prompt, which ignores TEXT. Both the keyboard shortcut and the desktop Exec run this.",
+    "source": "bin/llm-search:323-334",
+    "edge_cases": "A Rust CLI that calls ActivateAction or Activate directly must pass the same activation-token and desktop-startup-id platform data.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-23",
+    "behavior": "--dry-run: run() prints '  would run: <cmd>' instead of running it; render prints '  would render <name>'; the env file is not written and the safety check is skipped. Read-only gsettings get calls still run, and the 'linked', 'removed old' and 'removed' messages are still printed.",
+    "source": "bin/llm-search:27,32,97,134,234-239,266",
+    "edge_cases": "",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "CLI-24",
+    "behavior": "install.sh runs exec <dir of the real install.sh>/bin/llm-search install \"$@\", so every install option passes through and LLM_SEARCH_HOME is honored.",
+    "source": "install.sh:1-6",
+    "edge_cases": "",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "TPL-01",
+    "behavior": "The provider service file: '[D-BUS Service]', 'Name=io.github.oscillatingjem.AgentSearch.SearchProvider', 'Exec=/usr/bin/env PYTHONPATH=@SRC@ LLM_SEARCH_HOME=@HOME@ @PYTHON@ -m llm_search'.",
+    "source": "share/io.github.oscillatingjem.AgentSearch.SearchProvider.service.in:1-3",
+    "edge_cases": "In Rust the Exec becomes the binary, keeping LLM_SEARCH_HOME=@HOME@. The Name and the file name must not change.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "TPL-02",
+    "behavior": "The prompt box service file: '[D-BUS Service]', 'Name=io.github.oscillatingjem.AgentSearch', 'Exec=/usr/bin/env PYTHONPATH=@SRC@ LLM_SEARCH_HOME=@HOME@ @PYTHON@ -m llm_search.prompt --gapplication-service'.",
+    "source": "share/io.github.oscillatingjem.AgentSearch.service.in:1-3",
+    "edge_cases": "Keep --gapplication-service.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "TPL-03",
+    "behavior": "The desktop file: Type=Application; Name=@CATEGORY@; Comment=Send a prompt to Claude, local models and other AI agents; Icon=io.github.oscillatingjem.AgentSearch; Exec=@BIN@ prompt; DBusActivatable=true; Categories=Utility;; Keywords=AI;LLM;Agent;Chat;Prompt;Claude;Spotlight;Launcher;; StartupNotify=true. Its Name is also the search category label.",
+    "source": "share/io.github.oscillatingjem.AgentSearch.desktop.in:1-10",
+    "edge_cases": "There is no Actions= entry for preferences.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "TPL-04",
+    "behavior": "The search provider ini, copied verbatim: '[Shell Search Provider]', DesktopId=io.github.oscillatingjem.AgentSearch.desktop, BusName=io.github.oscillatingjem.AgentSearch.SearchProvider, ObjectPath=/io/github/oscillatingjem/AgentSearch/SearchProvider, Version=2. There is no DefaultDisabled, so the provider is on by default.",
+    "source": "share/io.github.oscillatingjem.AgentSearch.search-provider.ini:1-5",
+    "edge_cases": "GNOME Shell reads it only from $XDG_DATA_DIRS/gnome-shell/search-providers.",
+    "covered_by_test": "none"
+   },
+   {
+    "id": "TPL-05",
+    "behavior": "The icon is a scalable 128x128 SVG, copied verbatim and linked as hicolor/scalable/apps/io.github.oscillatingjem.AgentSearch.svg.",
+    "source": "share/io.github.oscillatingjem.AgentSearch.svg",
+    "edge_cases": "",
+    "covered_by_test": "none"
+   }
+  ],
+  "external_contracts": [
+   "D-Bus name 'io.github.oscillatingjem.AgentSearch.SearchProvider', object path '/io/github/oscillatingjem/AgentSearch/SearchProvider', interface org.gnome.Shell.SearchProvider2, with the method names and signatures exactly as in INTERFACE_XML (provider.py:14-41). Metas keys: id, name, description, gicon, all of type 's'.",
+   "D-Bus name 'io.github.oscillatingjem.AgentSearch' (the prompt box), object path '/io/github/oscillatingjem/AgentSearch', interfaces org.freedesktop.Application (Activate, ActivateAction) and org.gtk.Actions. Action 'search' takes parameter type 's'; action 'preferences' takes no parameter. Scripts and the provider's LaunchSearch depend on ActivateAction('search', [<s>], {}).",
+   "D-Bus service files (symlinks into $XDG_DATA_HOME, default ~/.local/share): dbus-1/services/io.github.oscillatingjem.AgentSearch.SearchProvider.service (Name=io.github.oscillatingjem.AgentSearch.SearchProvider) and dbus-1/services/io.github.oscillatingjem.AgentSearch.service (Name=io.github.oscillatingjem.AgentSearch; Exec must accept --gapplication-service). Both bake in LLM_SEARCH_HOME as it was at install time.",
+   "Search provider ini: $LLM_SEARCH_HOME/state/xdg/gnome-shell/search-providers/io.github.oscillatingjem.AgentSearch.search-provider.ini, containing DesktopId=io.github.oscillatingjem.AgentSearch.desktop, the BusName/ObjectPath above and Version=2.",
+   "Desktop file id 'io.github.oscillatingjem.AgentSearch.desktop' in ~/.local/share/applications, with DBusActivatable=true, Exec=<~/.local/bin/llm-search> prompt, Icon=io.github.oscillatingjem.AgentSearch and Name = the --name category. GNOME stores this id in the user's org.gnome.desktop.search-providers sort-order/disabled/enabled lists, in favorites and in the app-picker layout. It must also match the Wayland app_id (= the application id).",
+   "Icon file: ~/.local/share/icons/hicolor/scalable/apps/io.github.oscillatingjem.AgentSearch.svg, icon name 'io.github.oscillatingjem.AgentSearch'.",
+   "Command path ~/.local/bin/llm-search (a symlink to <code root>/bin/llm-search), plus the 'prompt' subcommand. Existing gsettings shortcut entries store the absolute string '<HOME>/.local/bin/llm-search prompt', and the desktop Exec uses the same path. After the migration, this path must still accept 'prompt [TEXT...]'.",
+   "gsettings: org.gnome.settings-daemon.plugins.media-keys custom-keybindings contains '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/llm-search/'. At that path, the relocatable schema org.gnome.settings-daemon.plugins.media-keys.custom-keybinding holds name (settings window: 'Agent Search'; installer: the --name value), command '<HOME>/.local/bin/llm-search prompt' and binding (a GTK accelerator string). Users edit it in Settings → Keyboard → Custom Shortcuts.",
+   "Config home: $LLM_SEARCH_HOME (default ~/.llm-search), read at runtime by both processes and by the installer. Layout: config/agents.toml (the single source of settings, edited in place with comments kept); config/secrets.env (KEY=value lines, mode 600, key name from [gateway] key_env, default LITELLM_MASTER_KEY); config/settings.toml (0.4.0 legacy, migrated once to settings.toml.migrated); config/.agents.toml.tmp (atomic-save temp file); state/install (rendered files); state/xdg (the extra XDG data dir).",
+   "agents.toml keys the settings window writes: [search] min_chars, max_rows; [prompt] idle_minutes; [routing] low_effort_max_words; [[app]] enabled, priority, cwd (addressed by id); [gateway] url, chat_url, auto_model. Also read: [[app]] id, name, url, command (argv with nested optional groups), cwd, requires, description, icon, tags, models, efforts, priority, copy_prompt, enabled; [aliases]; [routing] high_effort_patterns (Python re syntax, case-insensitive) and [[routing.rule]] tag/patterns/weight; [gateway] key_env. Placeholders {prompt}, {model}, {effort}.",
+   "~/.config/environment.d/60-llm-search.conf (XDG_CONFIG_HOME honored). It holds exactly '# Added by llm-search: lets GNOME Shell find its search provider.' plus 'XDG_DATA_DIRS=<LLM_SEARCH_HOME>/state/xdg:${XDG_DATA_DIRS:-/usr/local/share/:/usr/share/}'. The installer keeps the file when this exact line is present; uninstall removes any file at that path that contains 'llm-search'.",
+   "Path of the systemd environment generator used for the safety check: /usr/lib/systemd/user-environment-generators/30-systemd-environment-d-generator.",
+   "--copy install location: $XDG_DATA_HOME/llm-search (default ~/.local/share/llm-search), removed by uninstall --purge.",
+   "CLI: llm-search install [--copy] [--dry-run] [--name|--category-name NAME] [--shortcut BINDING]; uninstall [--purge] [--dry-run]; status; query WORDS...; prompt|open [TEXT...]; test; help|-h|--help. Exit codes: 0 ok, 1 error (die), 2 unknown command. ./install.sh [install options] forwards to install. The comments in users' installed agents.toml name `llm-search query` and `llm-search test`.",
+   "Environment variables: LLM_SEARCH_HOME, XDG_DATA_HOME, XDG_CONFIG_HOME, HOME (shortcut command, ~ expansion, BIN_HOME) and PATH (plus ~/.local/bin and ~/bin for 'requires' lookup). PYTHON is Python-only and can be retired.",
+   "Legacy identifiers cleaned on install and uninstall: io.github.oscillatingjem.LlmSearchProvider (.search-provider.ini in state/xdg and ~/.local/share/gnome-shell/search-providers, dbus-1 service, desktop file, svg, state/install/<old>.*), plus the 0.1.0 link ~/.local/share/gnome-shell/search-providers/io.github.oscillatingjem.AgentSearch.search-provider.ini.",
+   "Output formats that docs and scripts may depend on: 'llm-search status' lines ('  ok      <path>', '  missing <path>', 'search provider: running', 'prompt box: not running (starts when needed)', 'shortcut: <value>' or 'shortcut: none'); 'llm-search query' prints the raw gdbus tuple.",
+   "Logs: stderr lines prefixed 'llm-search: ' go to the user journal. The docs grep for 'llm-search', 'LlmSearchProvider' and 'AgentSearch'. The docs and the installer kill processes with `pkill -f llm_search` and `pkill -f -- '-m llm_searc[h]'`, so Rust process names change these instructions.",
+   "Docs URLs opened from the settings window: https://github.com/oscillatingjem/gnome-llm-search-provider/blob/main/docs/USAGE.md and .../docs/PROVIDERS.md.",
+   "LiteLLM gateway HTTP contract: GET <url>/model/info with an optional 'Authorization: Bearer <key>' header, a 0.5 s timeout, 60 s cache and 30 s back-off. It reads data[].model_name and model_info.{display_name, base, effort, tags, aliases, icon, priority}. Gateway model ids sent to chat_url are '<base>@<effort>'."
+  ],
+  "python_specific_semantics": [
+   "toml_edit.format_value writes strings with json.dumps (ensure_ascii=True), so non-ASCII becomes \\uXXXX. Characters above the BMP become surrogate pairs ('😀'), which TOML rejects, so saving any value with an emoji fails with EditError. Rust toml_edit writes literal UTF-8, so the bytes in the file differ (and the bug goes away). Checked on Python 3.14.8.",
+   "Numbers are written with Python repr: ints as-is, floats as '2.5', '30.0', '1e+16', 'inf', 'nan', '-0.0'. Restore Defaults therefore writes 'idle_minutes = 30.0', while the spin row writes an int ('30'). Rust f64 Display prints 1.0 as '1' (a TOML integer) and NaN as 'NaN' (invalid TOML), so use toml_edit's own formatting.",
+   "Read-back verification compares with Python ==, where 1 == 1.0 == True. A Rust check has to decide whether int vs float counts as equal. Python also accepts integers where floats are expected (priority = 1, weight = 3) and floats or bools where ints are expected (min_chars = 3.5 works). Strict serde typing would reject configs that load today.",
+   "App(**a) and Rule(**r) dataclasses make unknown or missing keys in [[app]] and [[routing.rule]] fatal (TypeError), while unknown keys elsewhere are ignored. Field types are never checked: a wrong type fails later, at ranking time.",
+   "query.parse and prompt-box refresh split with str.split(), which treats Python's whitespace set as separators, including \\x1c-\\x1f. Rust split_whitespace (Unicode White_Space) does not split on those.",
+   "Row.title uses str.capitalize(): the first character is title-cased (e.g. 'ǆ' -> 'ǅ') and the rest lowercased, so 'GPT-4O' becomes 'Gpt-4o'. Rust has no equivalent; implement titlecase first + to_lowercase rest.",
+   "@model tokens and [aliases] keys are lowercased with str.lower() (full Unicode mapping including final sigma). Rust to_lowercase is close but should be checked on edge cases.",
+   "The agent subtitle slice [:60] counts code points. Rust must slice by chars, not bytes, or it panics on a char boundary.",
+   "choose_folder uses str.startswith(home) without a separator check. Keep it or fix it deliberately.",
+   "Result ids use hashlib.blake2s(digest_size=6).hexdigest(). The digest size is part of the BLAKE2 parameter block, so truncating BLAKE2s-256 gives a different value.",
+   "Routing patterns are Python 're', compiled lazily at every re.search with re.IGNORECASE (Unicode \\w, \\b, \\s by default; lookaround, backreferences, atomic groups and possessive quantifiers since 3.11, conditional groups). An invalid pattern raises on every search instead of at load time. The Rust regex crate has no lookaround or backrefs; fancy-regex is closer but not identical. Python '$' also matches before a trailing newline.",
+   "toml_edit (Python) is line-based with str.splitlines(). That converts CRLF files to LF, splits on \\x0b, \\x0c, \\x1c-\\x1e, \\x85, U+2028 and U+2029 even inside comments and strings, then rejoins with '\\n' and adds a final newline. The key regex only matches bare keys, so quoted keys, dotted keys or inline tables cause duplicate-key EditErrors. The Rust toml_edit crate behaves differently on all of these.",
+   "URL templates use str.format: '{{' and '}}' escapes, format specs, conversions and index/attribute access all work, and an unknown placeholder raises KeyError. Values are percent-encoded with urllib.parse.quote(safe=''). Then parse_qsl (which decodes '+' to a space) and urlencode(quote_via=quote) re-encode the query and drop empty params, so a literal '+' in a template becomes '%20'.",
+   "launch.which uses shutil.which with PATH + ~/.local/bin + ~/bin (an X_OK check). cwd uses os.path.expanduser, which supports '~user'.",
+   "Path.read_text() decodes with the locale encoding, effectively UTF-8 on Fedora. A UnicodeDecodeError is a ValueError, not an OSError, so the settings window's handlers don't catch it. Rust should read UTF-8 explicitly and report the error.",
+   "Exceptions raised inside GTK signal handlers are printed by PyGObject and the app keeps running. In Rust a panic in a callback aborts the process, so every launch, save, regex or gateway error must be handled explicitly.",
+   "Gio.ThemedIcon.new(name).to_string() returns the bare name, except for names starting with '.' (tokenized form). gio-rs ThemedIcon::to_string has the same behavior, which a hand-rolled string would not.",
+   "GLib.Variant('s', text).print_(False) gives the gapplication action argument: single-quoted, or double-quoted when the text contains a single quote. glib::Variant::print(false) is the same C function.",
+   "Gtk.accelerator_name with GTK 4.22 gives '<Control><Super>space', not '<Primary>'. gtk4-rs calls the same function, so it matches as long as the same masks are used (accelerator_get_default_mod_mask, keyval_to_lower).",
+   "The remove_shortcut bash helper parses gsettings output with Python ast.literal_eval and prints Python list repr. The Rust port should use gio::Settings strv directly.",
+   "Python logging.exception writes a multi-line traceback to stderr; Rust will log differently.",
+   "Service Exec sets PYTHONPATH, which leaks into every command the provider spawns (env inheritance). It disappears in Rust.",
+   "int(minutes*60) and int(spin value) truncate toward zero, and GLib.timeout_add_seconds has 1 s granularity. Use timeout_add_seconds_local in Rust to match."
+  ],
+  "bugs_or_gaps_found": [
+   "Values containing characters outside the BMP (emoji in a cwd, URL or model) cannot be saved: json.dumps writes surrogate escapes and tomllib rejects them ('Escaped character is not a Unicode scalar value'), confirmed on Python 3.14.8. (src/llm_search/toml_edit.py:238)",
+   "choose_folder turns any path sharing the home prefix into '~…' ('/home/jem2/x' -> '~2/x'). It also crashes with AttributeError when get_path() is None for a non-native or portal folder. (prefs.py:270-273)",
+   "The shortcut dialog accepts Shift-only combinations (Shift+A gives '<Shift>a'), which steals normal typing, contradicting the comment at line 356. It rejects bare F-keys, Print and media keys that GNOME Settings allows, and has no conflict detection. (prefs.py:354-358)",
+   "The shortcut name diverges: shortcut.set always writes 'Agent Search', while install --shortcut writes the --name value, so changing the binding in settings renames a custom-named entry. The two also order the list update and key writes differently. (shortcut.py:27,39-43 vs bin/llm-search:110-117)",
+   "Plausible idle-timer race: open_settings cancels the timer and then hides the prompt window. If notify::is-active fires synchronously during the hide, dismiss() -> start_idle_timer() sees no visible window and arms a timer, or quits at once when idle_minutes <= 0, while the settings window is being opened; that timer is never cancelled. Not verified against GTK's ordering. In Rust, cancel the timer after presenting the settings window. (prompt.py:67,130-132,171-178)",
+   "Spin rows save on every notify::value, so each click or step atomically rewrites agents.toml. Values outside a row's range are silently clamped in the UI only. After a failed save the widget keeps showing the unsaved value. (prefs.py:93-102,109-116)",
+   "A disabled agent's ExpanderRow cannot be expanded, so its priority and working folder can't be edited until it is switched on. (prefs.py:245-246)",
+   "Gateway errors other than OSError/ValueError escape: non-object JSON or non-dict entries raise AttributeError in the provider and in the settings Test button. The fetch blocks the GTK/D-Bus main loop for up to 0.5 s, and in the prompt box this can happen per keystroke after the cache expires. (catalog.py:64-78; prefs.py:320; prompt.py:75)",
+   "Uncaught exceptions in GTK handlers: launch failures (missing cwd, no URI handler, unknown {placeholder}), invalid regexes, wrong config types, UnicodeDecodeError, and TOMLDecodeError in app.reload() after an outside edit. PyGObject only prints them; a Rust port must handle each one. (prompt.py:87-96; prefs.py:93-102,194-195)",
+   "A bad agents.toml at provider start kills the process before registration, so every search re-activates and fails. A bad edit after start makes every search return D-Bus Failed instead of falling back to the last good config. (provider.py:47-59,101)",
+   "Neither LaunchSearch nor ActivateResult passes an activation token or startup id: the prompt box and launched apps may open without focus. The LaunchSearch timestamp is discarded. (provider.py:86-94; launch.py:182-184)",
+   "The prompt box can stay resident forever: startup holds the app, and the idle timer is only armed when a window is dismissed or closed. A D-Bus start that never shows a window (introspection, a failed action) therefore never exits. (prompt.py:158,186-194)",
+   "Stale docs: USAGE.md says clicking the category icon sends the prompt to the top row, but LaunchSearch opens the prompt box with the query. TROUBLESHOOTING.md says the provider loads config once at start (it reloads when the signature changes) and shows the old id format 'app:claude-chat||'.",
+   "The settings window watches only agents.toml: changes to secrets.env or to the gsettings shortcut (e.g. from GNOME Settings) are not reflected while it is open. The (mtime_ns, size) signature misses same-size rewrites within one timestamp tick. The pending 300 ms refresh timer is not removed on close. (prefs.py:41-73; config.py:137-147)",
+   "config.update replaces a symlinked agents.toml (dotfiles setups) with a regular file and drops owner and xattrs. set_secret truncates and rewrites in place, not atomically, so a crash mid-write can lose keys. Secret values are written unquoted, and surrounding quotes are stripped on read. (config.py:114-118,121-134,85)",
+   "Python toml_edit normalizes CRLF to LF, splits lines on U+2028, \\x0c and similar characters inside comments and strings, can match a key line inside a multi-line string or array, and fails with duplicate-key errors when a key is quoted, dotted or in an inline table. (toml_edit.py:260-304)",
+   "Installer templating uses sed with unescaped replacements. --name 'Q&A' renders 'Name=Q@CATEGORY@A', a '|' in --name or a path aborts with a sed error, and Desktop Entry escaping is not applied. (bin/llm-search:135-137)",
+   "The environment.d check requires a literal ':/usr/share/:' with the trailing slash, so it falsely fails and removes the file on systems whose XDG_DATA_DIRS uses '/usr/share'. It evaluates against the installer's own environment, not a clean login. It is silently skipped on non-systemd systems or when the generator lives at another path. A failing generator exits under set -e without cleanup. Rewriting the file discards any other content. (bin/llm-search:227-246)",
+   "Under set -e, a missing g-s-d schema (gsettings present but no media-keys schema) aborts install --shortcut, and aborts uninstall before environment.d removal and pkill, because `list=$(gsettings get …)` fails. remove_shortcut also needs python3 on PATH. (bin/llm-search:108-109,123-126)",
+   "Dry runs print 'removed old …', 'removed unused …' and 'removed …' as if the files had been removed. (bin/llm-search:97,249,266)",
+   "uninstall without --purge leaves the --copy code ($XDG_DATA_HOME/llm-search) and an empty state/xdg behind, and doesn't refresh the desktop database. status reports dangling symlinks as 'ok' and never checks environment.d or the session's XDG_DATA_DIRS. (bin/llm-search:274-280,291)",
+   "'llm-search query' breaks on words that contain a single quote, and with no words it sends ['']. The 'prompt' fallback without gapplication ignores TEXT and uses the env LLM_SEARCH_HOME instead of the installed one. (bin/llm-search:317-320,332-333)",
+   "check_requirements never checks the GTK 4 or libadwaita typelibs the prompt box needs, and the Debian hint omits gir1.2-gtk-4.0 and gir1.2-adw-1. --copy copies over an existing directory without removing stale files. (bin/llm-search:44,62-75,164-165)",
+   "The 'Keep Running' spin row has digits 0 and truncates fractional idle_minutes from the file on any change. Restore writes 30.0 (float) while the spin writes ints, so the value's TOML type flips between saves. (prefs.py:153-155; config.py:160-162)",
+   "Migration hazard: the installer's pkill pattern '-m llm_searc[h]' won't match Rust binaries, and a running legacy Python process keeps owning the bus names (60 s for the provider, up to idle_minutes for the box). The Rust installer must kill both generations. Existing user agents.toml comments point to `python3 -c \"import tomllib…\"` and `llm-search test`, which a Python-free install may no longer support.",
+   "Minimum runtime versions implied by the code: GTK >= 4.12 (CssProvider.load_from_string, FileDialog), libadwaita >= 1.5 (AlertDialog), 1.4 (SpinRow, ToolbarView). gtk4-rs/libadwaita-rs feature flags (v4_12, v1_5) and the MSRV must fit distro rustc (Debian 13: 1.85; Ubuntu 24.04's default rustc is likely too old).",
+   "Test coverage gap: none of the 35 tests exercise the D-Bus provider, the prompt box, the settings window, shortcut.py or bin/llm-search. Only the ranker, launch helpers, query parser and config/toml_edit are covered (tests/test_search.py)."
+  ]
+ },
+ "rustFacts": {
+  "facts": [
+   {
+    "topic": "1. gtk4-rs versions",
+    "finding": "gtk4 0.11.5 (2026-09-20) is the latest stable. The 0.11 line started 2026-02-20 (0.11.0) and has had patches 0.11.1 (03-14), 0.11.2 (04-05), 0.11.3 (04-27) and 0.11.4 (06-29). Every 0.11.x declares rust-version 1.92 and edition 2024. Its dependencies are glib/gio/pango/cairo-rs/gdk-pixbuf/graphene ^0.22 and gdk4/gsk4/gtk4-macros ^0.11. The gtk4-rs main branch is already 0.12.0-alpha on gtk-rs-core 0.23.0-alpha, which is not released.",
+    "status": "verified",
+    "source": "https://crates.io/api/v1/crates/gtk4 ; https://crates.io/api/v1/crates/gtk4/0.11.5/dependencies ; https://raw.githubusercontent.com/gtk-rs/gtk4-rs/main/Cargo.toml ; https://github.com/gtk-rs/gtk4-rs/releases"
+   },
+   {
+    "topic": "1. glib/gio versions",
+    "finding": "glib and gio 0.22.10 (2026-09-19) are the latest. They declare rust-version 1.92. glib-sys has a baseline system requirement of GLib 2.56, with version features v2_58 through v2_90.",
+    "status": "verified",
+    "source": "https://crates.io/api/v1/crates/glib ; https://docs.rs/crate/glib-sys/latest/source/Cargo.toml.orig"
+   },
+   {
+    "topic": "1. gtk4 feature flags",
+    "finding": "gtk4 0.11.5 has features v4_2 through v4_24, each one cumulative. It also has gnome_42 to gnome_50 SDK alias features. gtk4-sys needs at least GTK 4.0.0, and each feature raises that requirement. The 0.11.0 release notes add v4_22 and gnome_49 and drop the 4.22 save/restore bindings that GTK removed. 0.11.5 reverts an application save/restore feature added in 0.11.2, so APIs can change within 0.11.x patch releases.",
+    "status": "verified",
+    "source": "https://crates.io/api/v1/crates/gtk4 ; https://docs.rs/crate/gtk4/0.11.5/source/Cargo.toml.orig ; https://docs.rs/crate/gtk4-sys/latest/source/Cargo.toml.orig ; https://github.com/gtk-rs/gtk4-rs/releases"
+   },
+   {
+    "topic": "1. libadwaita-rs versions",
+    "finding": "libadwaita 0.9.2 (2026-07-07) is the latest. It depends on gtk4/gdk4 ^0.11, glib/gio/pango ^0.22 and libadwaita-sys ^0.9.2. The crate declares no rust-version (null on crates.io), so its effective MSRV is the 1.92 inherited from gtk4/glib. 0.9.0 is yanked. Features: v1_1 through v1_10 (v1_10 is libadwaita 1.10 / GNOME 51), gtk_v4_2 through gtk_v4_24 passthroughs, and gio_v2_80.",
+    "status": "verified",
+    "source": "https://crates.io/api/v1/crates/libadwaita ; https://crates.io/api/v1/crates/libadwaita/0.9.2/dependencies ; https://crates.io/api/v1/crates/libadwaita-sys ; https://docs.rs/crate/libadwaita/0.9.2/source/Cargo.toml.orig"
+   },
+   {
+    "topic": "1. Adw API -> crate feature mapping",
+    "finding": "No feature gate: Application, ApplicationWindow, Window, HeaderBar, ActionRow, ExpanderRow (show-enable-switch has been there since 1.0), ToastOverlay, ViewStack, ViewSwitcher, PreferencesPage, PreferencesGroup, StatusPage. v1_2: EntryRow (including show-apply-button) and PasswordEntryRow. v1_4: SpinRow and ToolbarView. v1_5: AlertDialog, Dialog and PreferencesDialog. The bindings are AlertDialogExtManual::choose(self, parent, cancellable, callback) and choose_future(self, parent) -> Future<Output=GString>. Gates for newer APIs: Spinner and BottomSheet v1_6; ToggleGroup, WrapBox and InlineViewSwitcher v1_7; ShortcutsDialog and ShortcutLabel v1_8. The minimum flag for the listed set is therefore v1_5.",
+    "status": "verified",
+    "source": "https://docs.rs/libadwaita/0.9.2/libadwaita/index.html ; https://docs.rs/libadwaita/0.9.2/libadwaita/struct.AlertDialog.html ; https://docs.rs/libadwaita/0.9.2/libadwaita/struct.ShortcutLabel.html"
+   },
+   {
+    "topic": "1. Gtk API -> crate feature mapping",
+    "finding": "FileDialog needs v4_10 (open_future, save_future, select_folder_future and the multiple variants). The *_text_file_future variants need v4_18. CssProvider::load_from_string and load_from_bytes need v4_12; load_from_data has been deprecated since 4.12. UriLauncher needs v4_10, and UriLauncher::can_launch needs v4_20. EventControllerKey is GTK 4.0 and needs no flag. ShortcutLabel needs no flag but has been deprecated since GTK 4.18 and will be removed in GTK 5. The minimum flag for the listed Gtk set is v4_12; v4_14 matches Ubuntu 24.04.",
+    "status": "verified",
+    "source": "https://docs.rs/gtk4/0.11.5/gtk4/struct.FileDialog.html ; https://docs.rs/gtk4/0.11.5/gtk4/struct.CssProvider.html ; https://docs.rs/gtk4/0.11.5/gtk4/struct.UriLauncher.html ; https://docs.gtk.org/gtk4/class.ShortcutLabel.html ; https://docs.rs/gtk4/0.11.5/gtk4/struct.ShortcutLabel.html"
+   },
+   {
+    "topic": "1. Upstream GNOME versions",
+    "finding": "GNOME 51, GTK 4.24.0 and libadwaita 1.10.0 shipped in mid-September 2026. Arch extra has gtk4 4.24.1 and libadwaita 1.10.0. Fedora 45 has gtk4 4.24.1 and libadwaita 1.10.0.",
+    "status": "verified",
+    "source": "https://archlinux.org/packages/extra/x86_64/gtk4/ ; https://archlinux.org/packages/extra/x86_64/libadwaita/ ; https://packages.fedoraproject.org/pkgs/gtk4/gtk4-devel/"
+   },
+   {
+    "topic": "2. gio register_object API",
+    "finding": "In gio 0.22.10, DBusConnection::register_object(path, &DBusInterfaceInfo) returns a RegistrationBuilder. Its methods are method_call(Fn(DBusConnection, Option<&str> sender, &str path, Option<&str> iface, &str method, Variant params, DBusMethodInvocation)), typed_method_call::<T: DBusMethodCall>() (which returns a MethodCallBuilder), property(...), set_property(...) and build() -> Result<RegistrationId, glib::Error>. The builder is !Send.",
+    "status": "verified",
+    "source": "https://docs.rs/gio/latest/gio/struct.RegistrationBuilder.html"
+   },
+   {
+    "topic": "2. gio D-Bus example",
+    "finding": "gtk-rs-core ships examples/gio_dbus_register_object. It parses XML with DBusNodeInfo::for_xml and calls lookup_interface. It uses #[derive(glib::Variant)] argument structs and an enum that implements DBusMethodCall::parse_call. Calls are registered with .typed_method_call::<HelloMethod>().invoke_and_return_future_local(async handler). Registration happens in ApplicationImpl::dbus_register (chained to the parent), and unregistration in dbus_unregister. The example calls app.hold() before run(). The same directory has gio_dbus_object_manager and gio_dbus_receive_signals.",
+    "status": "verified",
+    "source": "https://github.com/gtk-rs/gtk-rs-core/tree/main/examples ; https://raw.githubusercontent.com/gtk-rs/gtk-rs-core/main/examples/gio_dbus_register_object/main.rs"
+   },
+   {
+    "topic": "2. gio Application hooks",
+    "finding": "ApplicationImpl provides dbus_register(&self, &DBusConnection, &str) -> Result<(), glib::Error>, dbus_unregister, local_command_line, handle_local_options, command_line, activate, startup and name_lost. ApplicationExtManual::hold() returns an ApplicationHoldGuard that releases on drop, and mark_busy() returns an ApplicationBusyGuard.",
+    "status": "verified",
+    "source": "https://docs.rs/gio/0.22.10/gio/subclass/prelude/trait.ApplicationImpl.html ; https://docs.rs/gio/0.22.10/gio/prelude/trait.ApplicationExtManual.html"
+   },
+   {
+    "topic": "2. zbus",
+    "finding": "zbus 6.0.0 was released on 2026-10-16, two days before this check, with MSRV 1.89. Its breaking changes: the blocking API is removed; zvariant, zbus_names and zbus_utils are folded in; Value is renamed to Variant; the async-io feature is replaced by a zruntime-based default-rt; GVariant support moved to a separate crate; error types are unified. The last 5.x is 5.19.0 (2026-08-09, MSRV 1.87). zbus has no GLib main-loop integration and would open its own session-bus connection, separate from GApplication's GDBusConnection.",
+    "status": "verified",
+    "source": "https://crates.io/api/v1/crates/zbus ; https://github.com/dbus2/zbus/releases"
+   },
+   {
+    "topic": "2. search-provider crate",
+    "finding": "search-provider 0.13.0 (2026-02-21) is published by A6GibKm. Its crates.io owners are haecker-felix, bilelmoussaoui and A6GibKm; its repository is gitlab.gnome.org/World/Rust/search-provider. Dependencies: zbus ^5.0 (default-features=false), async-channel and serde, plus optional gdk4 ^0.11 and gdk-pixbuf ^0.22. Features: async-std (default, maps to zbus/async-io) and tokio. SearchProvider::new(imp, bus_name, path) calls zbus::Connection::session().await.unwrap(), serves the object, and requests the given well-known name with ReplaceExisting. Calls go through an async_channel and are handled one at a time by synchronous SearchProviderImpl methods (activate_result, initial_result_set, result_metas). It has no gio::Application, hold/release or inactivity-timeout integration. It is still pinned to zbus 5, not 6.",
+    "status": "verified",
+    "source": "https://crates.io/api/v1/crates/search-provider ; https://crates.io/api/v1/crates/search-provider/0.13.0/dependencies ; https://docs.rs/crate/search-provider/0.13.0/source/src/search_provider.rs ; https://docs.rs/crate/search-provider/0.13.0/source/Cargo.toml.orig"
+   },
+   {
+    "topic": "2. Recommendation for SearchProvider2",
+    "finding": "Use gio directly. Subclass adw::Application. In ApplicationImpl::dbus_register, chain to the parent, then call connection.register_object(\"/<app/id>/SearchProvider\", &iface) with typed_method_call (or method_call for plain Variant handling). Use the app's own bus name, which is the app ID, as BusName in the GNOME Shell search-provider .ini file. In each handler, take `let _g = app.hold();` and reply. Dropping the guard brings the use count back to 0 and restarts the inactivity timeout (call set_inactivity_timeout, e.g. 10_000 ms). This needs no extra connection, bus name, runtime or service file, and D-Bus activation works through GApplication. zbus or search-provider would add a second connection, a second well-known name with its own .service file, and a runtime thread. search-provider also panics if no session bus is available.",
+    "status": "likely",
+    "source": "Design inference from https://docs.rs/gio/latest/gio/struct.RegistrationBuilder.html, the gtk-rs-core example above, and https://docs.gtk.org/gio/class.Application.html (use count reaching zero ends the app; inactivity-timeout is the time to stay alive after becoming idle)"
+   },
+   {
+    "topic": "3. GApplication D-Bus activation",
+    "finding": "The freedesktop spec says a D-Bus-activatable app implements org.freedesktop.Application with Activate, Open and ActivateAction(name, params, platform-data). The well-known name must equal the desktop-file ID, and the object path is derived from it (dots become slashes). platform-data carries desktop-startup-id and activation-token. In GLib, the D-Bus service file needs Name=<app-id> and Exec=<bin> --gapplication-service (GLib 2.40+). That switch only works if the app keeps the default local_command_line, so never override it and never hard-code IS_SERVICE in flags. IS_SERVICE makes registration fail if an instance is already running. Desktop-file Actions= entries arrive as ActivateAction and map to app actions (gio::ActionEntry, add_action_entries) with the same name, without the app. prefix. gtk-rs does nothing special here: run() passes the process args to GLib's parser. Fedora's Rust-based loupe package ships /usr/share/dbus-1/services/org.gnome.Loupe.service (checked locally).",
+    "status": "verified",
+    "source": "https://specifications.freedesktop.org/desktop-entry/latest/dbus.html ; https://wiki.gnome.org/HowDoI/DBusApplicationLaunching ; https://docs.gtk.org/gio/flags.ApplicationFlags.html ; local `dnf repoquery -l loupe`"
+   },
+   {
+    "topic": "4. toml_edit / toml versions",
+    "finding": "toml_edit 0.25.17+spec-1.1.0 (2026-10-09, MSRV 1.85) and toml 1.1.8+spec-1.1.0 (2026-10-09, MSRV 1.85) are the latest. Both target the TOML 1.1.0 spec. Fedora 44 packages rust-toml_edit 0.25.17.",
+    "status": "verified",
+    "source": "https://crates.io/api/v1/crates/toml_edit ; https://crates.io/api/v1/crates/toml ; local dnf repoquery"
+   },
+   {
+    "topic": "4. toml_edit comment/decor attachment",
+    "finding": "Parser behavior: all whitespace and comments before a [table] or [[array]] header become that table's decor prefix, and text after the header on the same line is its suffix. Comments before a key=value become the key's leaf_decor prefix. A same-line trailing comment after a value is the value's decor suffix. Anything left at end of file goes to DocumentMut trailing. So ArrayOfTables::remove(i) takes the comments directly above that [[entry]] header with it. Comment lines after the removed entry's last key belong to the next header's prefix and stay. ArrayOfTables has push, insert, remove, replace, retain, get_mut, iter_mut and into_array. When rendering, a table without a position inherits the last position seen in traversal, so a pushed [[entry]] is emitted right after its preceding sibling, not at end of file.",
+    "status": "verified",
+    "source": "https://docs.rs/crate/toml_edit/latest/source/src/parser/document.rs ; https://docs.rs/toml_edit/latest/toml_edit/struct.ArrayOfTables.html ; https://docs.rs/crate/toml_edit/latest/source/src/encode.rs"
+   },
+   {
+    "topic": "4. toml_edit arrays (inline vs multi-line)",
+    "finding": "Array::fmt() collapses an array to single-line style: first value gets the leading default decor, the others the default decor, trailing set to \"\", and trailing_comma false. Array::push(v) adds the value with only its default decor and does not copy the multi-line layout. To keep a multi-line array, build the value, call value.decor_mut().set_prefix(\"\\n    \"), then push_formatted, and keep set_trailing(\"\\n\") and set_trailing_comma(true). Array::remove does not fix up neighbors' decor. What a new table header's default prefix is (believed \"\\n\") was not confirmed.",
+    "status": "verified",
+    "source": "https://docs.rs/crate/toml_edit/latest/source/src/array.rs ; https://docs.rs/toml_edit/latest/toml_edit/struct.Array.html"
+   },
+   {
+    "topic": "4. toml + serde typed loading",
+    "finding": "toml::de::Error has message(), span() -> Option<Range<usize>> and set_input(). Its Display output reads 'TOML parse error at line L, column C' followed by a source snippet with a caret. toml::Spanned<T> keeps source ranges. Use #[serde(default)] with impl Default for defaults, and #[serde(deny_unknown_fields)] to reject typos.",
+    "status": "verified",
+    "source": "https://docs.rs/toml/latest/toml/de/struct.Error.html ; https://docs.rs/toml/latest/toml/index.html"
+   },
+   {
+    "topic": "4. TOML 1.1 vs Python tomllib",
+    "finding": "Python 3.14.8 tomllib on this machine rejects TOML 1.1 syntax: newlines inside inline tables, trailing commas in inline tables, times without seconds, and the \\e escape. The Rust toml and toml_edit crates accept TOML 1.1, so a config file edited for the Rust build can break the Python build while the two run side by side.",
+    "status": "verified",
+    "source": "local test: python3 -I -c 'import tomllib ...' (Python 3.14.8, Fedora 44)"
+   },
+   {
+    "topic": "5. Regex crate versions",
+    "finding": "regex 1.13.1 (2026-07-15, MSRV 1.65). fancy-regex 0.19.2 (2026-09-13, MSRV 1.66; default features unicode, perf, std, variable-lookbehinds; Fedora 44 only packages 0.16.2). pcre2 0.2.11 (2025-09-25, no MSRV declared, no release in over a year). glib::Regex wraps GRegex, which always compiles with PCRE2_UCP and adds PCRE2_UTF unless G_REGEX_RAW is set. G_REGEX_OPTIMIZE enables PCRE2 JIT. GLib sets no explicit match limit.",
+    "status": "verified",
+    "source": "https://crates.io/api/v1/crates/regex ; https://crates.io/api/v1/crates/fancy-regex ; https://crates.io/api/v1/crates/pcre2 ; https://raw.githubusercontent.com/GNOME/glib/main/glib/gregex.c"
+   },
+   {
+    "topic": "5. Rust regex syntax facts",
+    "finding": "regex is Unicode by default: \\d is \\p{Nd}, \\s is White_Space, \\w is Alphabetic + Mark + Nd + Pc + Join_Control, and \\b is the Unicode word boundary. (?i) uses simple case folding. There is no lookaround and no backreferences. \\A and \\z are supported, but \\Z is not documented, and {,n} is not documented. \\< and \\> are word-boundary assertions. Punctuation escapes are allowed for all ASCII except [0-9A-Za-z<>]. Octal escapes work only when enabled. Supported Unicode escapes include \\x7F, \\x{..}, \\u007F, \\u{..} and \\U0000007F. Named groups can be written (?P<n>) or (?<n>). Nested classes and the &&, -- and ~~ class operators are supported.",
+    "status": "verified",
+    "source": "https://docs.rs/regex/latest/regex/#syntax"
+   },
+   {
+    "topic": "5. fancy-regex facts",
+    "finding": "fancy-regex adds lookahead and lookbehind (variable-length by default), backrefs (\\1, \\k<name>, (?P=name)), atomic groups, conditionals, \\K, \\G, subroutine calls and \\Z. Its \\Z means end of text before trailing newlines, unlike Python's \\Z which is the absolute end. \\N means any character except newline, which clashes with Python's \\N{NAME}. Patterns without fancy features are delegated to the linear-time regex crate. RegexBuilder has case_insensitive (since 0.14) and backtrack_limit, which defaults to 1,000,000. is_match, find and captures return Result because the backtrack limit can be exceeded. oniguruma_mode(true) makes \\< and \\> literal but also changes how quantifiers and ^ parse, for example x{2}+ stops being possessive. Version 0.19 uses simple case folding for case-insensitive backreferences.",
+    "status": "verified",
+    "source": "https://docs.rs/fancy-regex/latest/fancy_regex/ ; https://docs.rs/fancy-regex/latest/fancy_regex/struct.RegexOptionsBuilder.html ; https://docs.rs/fancy-regex/latest/fancy_regex/struct.Regex.html ; https://raw.githubusercontent.com/fancy-regex/fancy-regex/main/CHANGELOG.md"
+   },
+   {
+    "topic": "5. Python re behaviors to preserve (checked locally with re.IGNORECASE, re.search)",
+    "finding": "Results from Python 3.14.8: 'a$' matches 'a\\n', so $ matches before a final newline. 'a\\Z' does not match 'a\\n'. \\z is accepted in 3.14. \\s matches U+001C. \\w does not match the combining mark U+0301. (?i)s matches U+017F ſ and (?i)k matches U+212A (Kelvin sign). (?i)[a-z] matches İ (U+0130) and ı (U+0131), and (?i)i matches İ. a{,3}b is valid. \\d matches Arabic-Indic digits. Lookbehind, backrefs, atomic (?>..) and possessive a++ work. '\\<' matches a literal '<'. '[[]' and '[a&&b]' are literal sets in Python, with FutureWarnings.",
+    "status": "verified",
+    "source": "local test script with python3 -I (Python 3.14.8, Fedora 44)"
+   },
+   {
+    "topic": "5. Regex recommendation and incompatibilities",
+    "finding": "Recommend fancy-regex 0.19 with RegexBuilder::new(p).case_insensitive(true).backtrack_limit(N).build(), using is_match as the equivalent of re.search. It is pure Rust, ergonomic and linear-time for most patterns, it bounds backtracking, and it supports lookaround, backrefs, atomic groups and conditionals. Known incompatibilities with Python re: (a) \\< and \\> are word boundaries, not literals. (b) \\Z means 'before trailing newline' in fancy-regex, whereas Python's \\Z is the absolute end (Rust's \\z). (c) $ only matches at the absolute end; Python also matches before a final \\n. (d) [[ inside a class, &&, -- and ~~ are class syntax, not literals. (e) {,n} is likely a compile error. (f) Case folding: İ and ı do not match ASCII i or [a-z]; ſ and K should match in both. (g) \\s does not include U+001C..U+001F. (h) \\w includes combining marks. (i) \\N{NAME} is unsupported, and \\N means something else. (j) Octal escapes are off. (k) There are no (?a) or (?L) flags. (l) Match offsets are UTF-8 byte offsets, not code points. (m) Match calls can return BacktrackLimitExceeded. Mitigations: a small pre-translator (\\< to <, \\> to >, Python \\Z to \\z, {,n} to {0,n}, escape [ inside classes), and a one-time migration check that compiles every stored user pattern and reports failures. glib::Regex (PCRE2, no new dependency) is closer to Python on \\<, nested [ and $, but PCRE2 \\Z still differs, \\u, \\U and \\N{} are unsupported, there is no backtracking guard beyond PCRE2's defaults, and the API is less ergonomic. Treat it as the fallback if exact parity matters more than ReDoS safety.",
+    "status": "likely",
+    "source": "Synthesis of the regex/fancy-regex/gregex sources above and the local Python tests. Items (e), (f) for İ/ı, and (g) were not run in Rust because no Rust toolchain is installed here."
+   },
+   {
+    "topic": "6. Percent-encoding equal to quote(safe='')",
+    "finding": "glib::Uri::escape_string(s, None, false) uses GLib's unreserved set: ASCII alphanumerics plus '-', '.', '_' and '~'. On this machine (GLib 2.88.4) it produced byte-identical output to Python 3.14 urllib.parse.quote(s, safe='') for 'a b/c?d=é~_.-!*()''. The crate alternative is percent-encoding 2.3.2 with utf8_percent_encode(s, &NON_ALPHANUMERIC.remove(b'-').remove(b'.').remove(b'_').remove(b'~')).",
+    "status": "verified",
+    "source": "https://docs.rs/glib/0.22.10/glib/struct.Uri.html ; https://docs.gtk.org/glib/type_func.Uri.escape_string.html ; local ctypes comparison ; https://crates.io/api/v1/crates/percent-encoding"
+   },
+   {
+    "topic": "6. Launching URIs",
+    "finding": "gio::AppInfo::launch_default_for_uri(uri, Option<&AppLaunchContext>) -> Result<(), glib::Error>, plus _async and _future variants, with no feature gate. In windowed code, prefer gtk::UriLauncher::new(uri).launch(parent, cancellable, cb) or launch_future(parent) (v4_10), which go through the OpenURI portal under Flatpak. In the search-provider path there is no window; pass gdk::Display::default()'s app_launch_context() so the activation token reaches the launched app.",
+    "status": "verified",
+    "source": "https://docs.rs/gio/0.22.10/gio/struct.AppInfo.html ; https://docs.rs/gtk4/0.11.5/gtk4/struct.UriLauncher.html (the launch-context advice is likely, not verified)"
+   },
+   {
+    "topic": "6. Detached processes",
+    "finding": "In Rust 1.99.1 std, CommandExt::process_group (stable since 1.64) and pre_exec (stable since 1.34, unsafe) are available. CommandExt::setsid is still nightly-only (process_setsid, issue #105376). Equivalent of Python start_new_session=True: unsafe { cmd.pre_exec(|| { if libc::setsid() < 0 { return Err(io::Error::last_os_error()) } Ok(()) }) } with Stdio::null(). Or use process_group(0) if a new process group is enough, which keeps the posix_spawn fast path. A long-lived service must reap children (wait() in a thread, or glib child watch), or use gio::Subprocess, which reaps automatically.",
+    "status": "verified",
+    "source": "https://doc.rust-lang.org/std/os/unix/process/trait.CommandExt.html ; https://doc.rust-lang.org/unstable-book/library-features/process-setsid.html ; https://docs.gtk.org/glib/func.spawn_async_with_pipes_and_fds.html"
+   },
+   {
+    "topic": "6. HTTP client for localhost LiteLLM",
+    "finding": "ureq 3.4.2 (2026-09-13, MSRV 1.85) is blocking and needs no async runtime. Its default features are rustls and gzip. With default-features=false and features=[\"json\"], only plain HTTP is supported, which is enough for localhost: ureq::post(url).send_json(&body)?.body_mut().read_json::<T>()?, with Agent::config_builder().timeout_global(Some(Duration)). Run it in gio::spawn_blocking(f), which returns an awaitable JoinHandle on Gio's I/O pool and should be given a timeout, and await it from glib::MainContext::spawn_local. The alternative is soup3 0.9.0 (2026-03-08, MSRV 1.92, glib/gio ^0.22, features up to v3_8): async on the GLib main loop, but it needs libsoup3-devel to build (Fedora 44 has libsoup3 3.6.6).",
+    "status": "verified",
+    "source": "https://crates.io/api/v1/crates/ureq ; https://docs.rs/ureq/3.4.2/ureq/ ; https://crates.io/api/v1/crates/soup3 ; https://docs.rs/gio/0.22.10/gio/fn.spawn_blocking.html"
+   },
+   {
+    "topic": "7. Rust toolchain landscape",
+    "finding": "The latest stable Rust is 1.99.1 (docs dated 2026-10-13). 1.100.0 is due 2026-11-12. Rust 1.92 is the gtk-rs 0.22/0.11 MSRV. gtk4 0.10.3 (the previous line, with glib 0.21 and libadwaita 0.8.1) has MSRV 1.83.",
+    "status": "verified",
+    "source": "https://releases.rs/ ; https://doc.rust-lang.org/std/os/unix/process/trait.CommandExt.html ; https://crates.io/api/v1/crates/gtk4/0.10.3 ; https://crates.io/api/v1/crates/libadwaita/0.8.1/dependencies"
+   },
+   {
+    "topic": "7. Fedora",
+    "finding": "Fedora 43 has rust/cargo 1.99.0-1.fc43 (1.99.1 in testing), gtk4-devel 4.20.4 and libadwaita-devel 1.8.8. Fedora 44, confirmed locally, has rust/cargo 1.99.0-1.fc44, gtk4-devel 4.22.5-2, libadwaita-devel 1.9.4-1, glib2-devel 2.88.4, glibc 2.43 and pcre2 10.47. Fedora 44 also packages rust-gtk4-devel 0.11.5, rust-libadwaita-devel 0.9.2, rust-glib/gio-devel 0.22.10, rust-zbus-devel 5.19.0, rust-regex-devel 1.13.1 and rust-fancy-regex-devel 0.16.2. Fedora 45 has gtk4 4.24.1 and libadwaita 1.10.0.",
+    "status": "verified",
+    "source": "https://packages.fedoraproject.org/pkgs/rust/rust/ ; https://packages.fedoraproject.org/pkgs/gtk4/gtk4-devel/ ; https://packages.fedoraproject.org/pkgs/libadwaita/libadwaita-devel/ ; local rpm -q / dnf repoquery"
+   },
+   {
+    "topic": "7. Debian 13",
+    "finding": "trixie has rustc and cargo 1.85.1+dfsg1-1+deb13u1, which is below 1.92, so gtk4 0.11 does not build. trixie-backports has rustc and cargo 1.96.1+dfsg1-2~bpo13+1 (1.95.0 on armel and riscv64). libgtk-4-dev is 4.18.6+ds-2, libadwaita-1-dev is 1.7.6-1~deb13u1 and libc6 is 2.41. forky and sid have GTK 4.24.1 and libadwaita 1.10.0.",
+    "status": "verified",
+    "source": "https://packages.debian.org/search?keywords=rustc&searchon=names&exact=1&suite=all&section=all ; https://packages.debian.org/search?keywords=cargo&searchon=names&exact=1&suite=all&section=all ; https://packages.debian.org/search?keywords=libgtk-4-dev&searchon=names&exact=1&suite=all&section=all ; https://packages.debian.org/search?keywords=libadwaita-1-dev&searchon=names&exact=1&suite=all&section=all"
+   },
+   {
+    "topic": "7. Ubuntu",
+    "finding": "24.04 noble: the default rustc is 1.75.0. Versioned rustc-1.74 to 1.85, rustc-1.89 and rustc-1.91 (1.91.1) exist, but none reaches 1.92, so gtk4 0.11 cannot be built with distro rustc. libgtk-4-dev is 4.14.5 (noble-updates), libadwaita-1-dev is 1.5.0-1ubuntu2 and libc6 is 2.39. 26.04 resolute: rustc 1.93.1, plus rustc-1.91, 1.92 and 1.93. libgtk-4-dev is 4.22.4 (updates), libadwaita-1-dev is 1.9.1 (updates) and libc6 is 2.43.",
+    "status": "verified",
+    "source": "https://packages.ubuntu.com/search?keywords=rustc&searchon=names&suite=all&section=all ; https://packages.ubuntu.com/search?keywords=libgtk-4-dev&searchon=names&suite=all&section=all ; https://packages.ubuntu.com/search?keywords=libadwaita-1-dev&searchon=names&suite=all&section=all ; https://packages.ubuntu.com/search?keywords=libc6&searchon=names&exact=1&suite=all&section=all ; https://launchpad.net/ubuntu/+source/rustc"
+   },
+   {
+    "topic": "7. Arch / openSUSE Tumbleweed",
+    "finding": "Arch extra has rust 1:1.99.1-1 (2026-10-17), gtk4 1:4.24.1-1 and libadwaita 1:1.10.0-1. Arch has no -devel split. openSUSE Tumbleweed oss has rust1.99 and cargo1.99 at 1.99.0, with versioned rust1.84 to rust1.98 also available, gtk4-devel 4.22.5 and libadwaita-devel 1.9.4. GNOME 51 had not yet reached Tumbleweed oss on 2026-10-18.",
+    "status": "verified",
+    "source": "https://archlinux.org/packages/?q=&name=rust ; https://archlinux.org/packages/extra/x86_64/gtk4/ ; https://archlinux.org/packages/extra/x86_64/libadwaita/ ; https://download.opensuse.org/tumbleweed/repo/oss/x86_64/ (P= listings)"
+   },
+   {
+    "topic": "8. GitHub Actions runner images",
+    "finding": "The ubuntu-26.04 runner is generally available. ubuntu-latest moves from 24.04 to 26.04 in a phased rollout between 2026-10-19 and 2026-11-19. GitHub says you can pin ubuntu-24.04 but gives no retirement date for it.",
+    "status": "verified",
+    "source": "https://github.blog/changelog/2026-09-17-ubuntu-26-generally-available-and-latest-migration"
+   },
+   {
+    "topic": "8. Prebuilt binary baseline",
+    "finding": "Build on a pinned ubuntu-24.04 runner (glibc 2.39, GTK 4.14.5, libadwaita 1.5.0) with a rustup toolchain of 1.92 or newer, features v4_14 and v1_5, and dynamic linking against system GTK and libadwaita. The binary should then run on Fedora 43/44, Debian 13, Ubuntu 24.04/26.04, Arch and Tumbleweed, all of which have glibc 2.39 or newer, GTK 4.14 or newer and libadwaita 1.5 or newer. Enabling higher features raises the minimum. system-deps checks the pkg-config version at build time. rustc on Linux appears to link with full RELRO/BIND_NOW, so a missing libadwaita symbol stops the binary at startup, and PyGObject-style runtime version checks for newer widgets are not possible. GTK cannot be linked statically.",
+    "status": "likely",
+    "source": "Distro versions verified above. BIND_NOW behavior per https://users.rust-lang.org/t/linux-executable-lazy-loading/65621 (not confirmed in rustc source)."
+   },
+   {
+    "topic": "8. How GNOME Rust apps ship",
+    "finding": "Loupe on Flathub uses runtime 51 with the rust-stable and llvm22 SDK extensions, a release tarball and generated-sources-loupe.json from flatpak-builder-tools (flatpak-cargo-generator), and builds with meson. Fragments on Flathub uses runtime 50, rust-stable and a meson release tarball (fragments-3.0.1.tar.xz). Its meson.build needs gtk4 4.15.3 or newer and libadwaita-1 1.7 or newer. Shortwave and Pika Backup on Flathub use generated-sources.json via a flatpak-builder-tools submodule. Distros build them from source: Fedora 44 ships loupe 50.0 (installsize 7.9 MB), fragments 3.0.1 (10.9 MB), snapshot 50.0 (4.2 MB) and gnome-tour 50.0 (2.4 MB), with data files included. None of them distribute generic prebuilt binaries or recommend cargo install. cargo install would not install the .desktop file, D-Bus service, search-provider .ini, icons or gschemas anyway.",
+    "status": "verified",
+    "source": "https://raw.githubusercontent.com/flathub/org.gnome.Loupe/master/org.gnome.Loupe.yml ; https://raw.githubusercontent.com/flathub/de.haeckerfelix.Fragments/master/de.haeckerfelix.Fragments.json ; https://gitlab.gnome.org/World/Fragments/-/raw/main/meson.build ; https://github.com/flathub/org.gnome.World.PikaBackup ; https://github.com/flathub/de.haeckerfelix.Shortwave ; local dnf repoquery (the 'no prebuilt binaries' part is likely)"
+   },
+   {
+    "topic": "9. GTK tests",
+    "finding": "#[gtk::test] from gtk4-macros 0.11 wraps #[test] with GTK setup. It runs all tests on one GTK main thread, so they run serially, and it also supports async tests. gtk4-rs's own CI runs `xvfb-run --auto-servernum cargo test` with GSK_RENDERER=cairo in a container. Libadwaita widgets should also call adw::init() (likely).",
+    "status": "verified",
+    "source": "https://docs.rs/gtk4-macros/0.11.0/gtk4_macros/attr.test.html ; https://raw.githubusercontent.com/gtk-rs/gtk4-rs/main/.github/workflows/CI.yml"
+   },
+   {
+    "topic": "9. D-Bus integration tests",
+    "finding": "gio 0.22.10 exposes TestDBus: new(TestDBusFlags), add_service_dir(&str), up(), down(), stop(), bus_address() and unset(). up() starts a private dbus-daemon and sets DBUS_SESSION_BUS_ADDRESS for the process, so run such tests serially or one per test binary. Point add_service_dir at a generated .service file whose Exec is env!(\"CARGO_BIN_EXE_<bin>\") --gapplication-service, then drive org.gnome.Shell.SearchProvider2 with gio::DBusProxy or call_future. The other option is to wrap the test run in `dbus-run-session -- cargo test`. On Fedora 44, dbus-run-session comes from the dbus-daemon package (checked locally), and GTestDBus also needs the dbus-daemon binary.",
+    "status": "verified",
+    "source": "https://docs.rs/gio/0.22.10/gio/struct.TestDBus.html ; local rpm -qf $(command -v dbus-run-session) (the test layout is a recommendation)"
+   }
+  ],
+  "recommended_versions": "Toolchain: rust-version = \"1.92\" and edition = \"2024\" in Cargo.toml. Commit Cargo.lock. Build in CI with rustup stable (1.99.1 today) and a separate 1.92 MSRV job. The resolver v3 that comes with edition 2024 is MSRV-aware.\n\nCore crates, latest stable on 2026-10-18:\n- gtk = { package = \"gtk4\", version = \"0.11.5\", features = [\"v4_14\"] }. v4_12 is the hard minimum (CssProvider::load_from_string; FileDialog and UriLauncher need v4_10). v4_14 matches Ubuntu 24.04.\n- adw = { package = \"libadwaita\", version = \"0.9.2\", features = [\"v1_5\"] }. v1_5 is needed for AlertDialog; SpinRow and ToolbarView need v1_4; EntryRow and PasswordEntryRow need v1_2. 0.9.0 is yanked.\n- glib = \"0.22.10\", gio = \"0.22.10\" (MSRV 1.92). No extra GLib feature is needed for the listed APIs.\n\nRaise the flags only if the app really uses newer APIs, and each step drops distros:\n- v1_6 adds Spinner and BottomSheet.\n- v1_7 adds ToggleGroup, WrapBox and InlineViewSwitcher. This drops Ubuntu 24.04.\n- v1_8 adds ShortcutsDialog and AdwShortcutLabel (the replacement for GtkShortcutLabel, deprecated since GTK 4.18). This drops Debian 13.\n- v1_9 drops Fedora 43.\n- v4_18 is the Debian 13 ceiling, v4_20 Fedora 43, and v4_22 Fedora 44, Ubuntu 26.04 and Tumbleweed.\n- v4_24 and v1_10 are currently Arch, Fedora 45 and Debian sid only.\n\nD-Bus: use gio's DBusConnection::register_object inside ApplicationImpl::dbus_register, with no extra crate. Avoid zbus 6.0.0 (released 2026-10-16, MSRV 1.89, many breaking changes) and search-provider 0.13.0 (pinned to zbus ^5; 5.19.0 has MSRV 1.87).\n\nConfig: toml_edit = \"0.25.17\" (MSRV 1.85) for round-trip edits, and toml = \"1.1.8\" (MSRV 1.85) with serde = { version = \"1\", features = [\"derive\"] } for typed loading.\n\nRegex: fancy-regex = \"0.19.2\" (MSRV 1.66), which uses regex 1.13.1 (MSRV 1.65) internally. Fallback for closer PCRE semantics: glib::Regex.\n\nURL encoding: glib::Uri::escape_string(s, None, false), with no new dependency. Alternative: percent-encoding = \"2.3.2\".\n\nHTTP: ureq = { version = \"3.4.2\", default-features = false, features = [\"json\"] } (MSRV 1.85) plus serde_json, run on gio::spawn_blocking. Alternative: soup3 = \"0.9.0\" (MSRV 1.92).\n\nProcesses: std::process with pre_exec(setsid) or process_group(0), plus explicit reaping. CommandExt::setsid is still nightly. Or use gio::Subprocess.\n\nTesting: #[gtk::test] (gtk4-macros 0.11), gio::TestDBus, xvfb-run with GSK_RENDERER=cairo.\n\nFallback for building with distro rustc on Ubuntu 24.04 or Debian 13 stable: pin gtk4 0.10.3 (MSRV 1.83), libadwaita 0.8.1 and glib/gio 0.21. That line is no longer current, so prefer rustup or backports.",
+  "distro_matrix": "Build-dependency minimum on every distro: a C linker (gcc), pkg-config, and the GTK4, libadwaita and GLib dev files. For tests, add dbus-daemon (dbus-run-session, GTestDBus) and Xvfb. \"Max flags\" means the highest gtk4/libadwaita crate features the distro's system libraries satisfy.\n\n- **Fedora 43**\n  - Rust: rust and cargo 1.99.0-1.fc43; 1.99.1 is in updates-testing.\n  - GTK 4.20.4, libadwaita 1.8.8, glibc 2.42 (glibc not verified).\n  - Packages: `dnf install rust cargo gcc pkgconf-pkg-config gtk4-devel libadwaita-devel glib2-devel` (tests: dbus-daemon, xorg-x11-server-Xvfb).\n  - gtk4 0.11.5 / libadwaita 0.9.2 with distro rustc: YES. Max flags v4_20 / v1_8.\n\n- **Fedora 44** (checked locally)\n  - Rust: rust and cargo 1.99.0-1.fc44; 1.99.1 in testing.\n  - gtk4-devel 4.22.5-2.fc44, libadwaita-devel 1.9.4-1.fc44, glib2-devel 2.88.4, glibc 2.43, pcre2 10.47.\n  - Same package names as Fedora 43. Fedora also packages rust-gtk4-devel 0.11.5, rust-libadwaita-devel 0.9.2, rust-glib-devel/rust-gio-devel 0.22.10, rust-zbus-devel 5.19.0, rust-toml_edit-devel 0.25.17, rust-regex-devel 1.13.1 and rust-fancy-regex-devel 0.16.2 (older than crates.io 0.19.2).\n  - Build with distro rustc: YES. Max flags v4_22 / v1_9.\n  - Bonus, Fedora 45: GTK 4.24.1, libadwaita 1.10.0, rust 1.98.1 stable / 1.99.1 testing.\n\n- **Debian 13 (trixie)**\n  - Rust: rustc and cargo 1.85.1+dfsg1-1+deb13u1, which is below MSRV 1.92, so gtk4 0.11 does NOT build. trixie-backports has rustc and cargo 1.96.1+dfsg1-2~bpo13+1 (1.95.0 on armel and riscv64), which does build.\n  - libgtk-4-dev 4.18.6+ds-2, libadwaita-1-dev 1.7.6-1~deb13u1, libc6 2.41.\n  - Packages: `apt install -t trixie-backports rustc cargo`, then `apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev libglib2.0-dev` (tests: dbus-daemon, xvfb).\n  - Max flags v4_18 / v1_7.\n\n- **Ubuntu 24.04 (noble)**\n  - Rust: the default rustc is 1.75.0. Versioned rustc-1.74 through 1.85, rustc-1.89 and rustc-1.91 (1.91.1) exist, but nothing reaches 1.92, so gtk4 0.11 does NOT build with distro rustc. Options: use rustup, or fall back to gtk4 0.10.3 / libadwaita 0.8.1 (MSRV 1.83) with rustc-1.85 or newer.\n  - libgtk-4-dev 4.14.5+ds-0ubuntu0.10 (noble-updates), libadwaita-1-dev 1.5.0-1ubuntu2, libc6 2.39.\n  - Packages: build-essential pkg-config libgtk-4-dev libadwaita-1-dev libglib2.0-dev; rustc-1.91/cargo-1.91 if you use a versioned toolchain (the cargo-1.91 name was not verified).\n  - Max flags v4_14 / v1_5.\n\n- **Ubuntu 26.04 (resolute)**\n  - Rust: rustc 1.93.1, with rustc-1.91, 1.92 and 1.93 also available.\n  - libgtk-4-dev 4.22.4 (updates; 4.22.2 at release), libadwaita-1-dev 1.9.1 (updates; 1.9.0 at release), libc6 2.43.\n  - Same package names as 24.04.\n  - Build with distro rustc: YES. Max flags v4_22 / v1_9.\n\n- **Arch**\n  - Rust: rust 1:1.99.1-1 (extra, 2026-10-17).\n  - gtk4 1:4.24.1-1, libadwaita 1:1.10.0-1. There is no -devel split; headers ship in the main packages.\n  - Packages: `pacman -S --needed base-devel pkgconf rust gtk4 libadwaita` (tests: xorg-server-xvfb; dbus is already in base).\n  - Build with distro rustc: YES. Max flags v4_24 / v1_10.\n\n- **openSUSE Tumbleweed** (2026-10-18)\n  - Rust: rust1.99 and cargo1.99 at 1.99.0, pulled in by the rust and cargo meta packages; rust1.84 through rust1.98 are also available.\n  - gtk4-devel 4.22.5, libadwaita-devel 1.9.4. GNOME 51 had not landed in oss yet.\n  - Packages: `zypper in rust cargo gcc pkgconf-pkg-config gtk4-devel libadwaita-devel glib2-devel` (tests: dbus-1-daemon, xvfb-run; these test package names were not verified).\n  - Build with distro rustc: YES. Max flags v4_22 / v1_9.\n\nPrebuilt-binary baseline that covers every distro above: build on a pinned ubuntu-24.04 runner (glibc 2.39, GTK 4.14.5, libadwaita 1.5.0) with features v4_14 and v1_5.",
+  "risks": [
+   "Ubuntu 24.04 cannot build the current gtk-rs stack with distro rustc. gtk4/glib 0.22/0.11 need Rust 1.92 and noble's newest versioned toolchain is rustc-1.91 (1.91.1). Debian 13 stable has only 1.85.1 and needs trixie-backports (1.96.1). Distro-native packaging on those releases needs rustup, backports, or a downgrade to gtk4 0.10.3 / libadwaita 0.8.1 / glib 0.21.",
+   "Compile-time features replace PyGObject's runtime version checks. A binary built with libadwaita v1_7 or newer will not start on Ubuntu 24.04 (libadwaita 1.5.0), and v1_8 or newer will not start on Debian 13 (1.7.6). rustc appears to link with BIND_NOW, so missing symbols fail at load time (likely, not confirmed in rustc source). Pick the feature baseline before porting any UI code.",
+   "ubuntu-latest switches to Ubuntu 26.04 between 2026-10-19 and 2026-11-19. Release binaries built on ubuntu-latest would then silently require glibc 2.43, GTK 4.22 and libadwaita 1.9. Pin runs-on: ubuntu-24.04; GitHub gives no end-of-life date for that image.",
+   "zbus 6.0.0 shipped 2026-10-16 with large breaking changes: blocking API removed, Value renamed to Variant, a new runtime, MSRV 1.89. search-provider 0.13.0 is still on zbus ^5, so adopting either means a dependency tree in flux. search-provider also opens a second session connection and calls unwrap() on it, needs its own well-known bus name and .service file, and does not integrate with GApplication hold/release or inactivity timeouts.",
+   "If the search provider's object is registered after the bus name is acquired (for example in startup instead of dbus_register), calls from a D-Bus-activated launch could hit a missing object. Register in ApplicationImpl::dbus_register as the gtk-rs example does. Never override local_command_line, or --gapplication-service stops working. Never hard-code ApplicationFlags::IS_SERVICE.",
+   "Regex semantics change silently for existing user patterns. Rust regex and fancy-regex differ from Python re on: \\< and \\> (word boundaries vs literals), \\Z, $ before a final newline, [[ and && inside classes, {,n}, Turkish İ/ı case folding, \\s on U+001C to U+001F, \\w on combining marks, \\N{NAME}, octal escapes, the (?a) flag, and byte vs code-point offsets. fancy-regex match calls can also return BacktrackLimitExceeded (default limit 1,000,000). Several Rust-side behaviors were not run because no Rust toolchain is installed here.",
+   "TOML 1.1: toml 1.1.8 and toml_edit 0.25.17 accept TOML 1.1 (multi-line inline tables, trailing commas, \\e, times without seconds), while Python 3.14 tomllib rejects all four (checked locally). During a phased migration, a config edited by or for the Rust build can break the Python build.",
+   "toml_edit decor pitfalls: Array::fmt() collapses multi-line arrays to one line, Array::push does not copy the neighbors' multi-line decor, and Array::remove leaves neighbor decor unchanged. Removing an [[entry]] takes the comments above its header, but the comment lines after its last key stay with the following header. Cover these cases with round-trip golden tests.",
+   "gtk4-rs 0.11.x patch releases have added and then reverted APIs (save/restore state added in 0.11.2, reverted in 0.11.5). The main branch is already 0.12.0-alpha on gtk-rs-core 0.23, and a 0.12/0.23 bump around GNOME 52 is likely. Commit Cargo.lock and expect a breaking upgrade roughly every 6 to 12 months.",
+   "GtkShortcutLabel has been deprecated since GTK 4.18 and will be removed in GTK 5. AdwShortcutLabel needs libadwaita 1.8 (v1_8), which conflicts with a v1_5 baseline. Expect deprecation warnings once v4_18 or higher is enabled (likely).",
+   "Flatpak, the usual way GNOME Rust apps ship (Loupe, Fragments, Shortwave and Pika Backup are all on Flathub), sandboxes the app. Launching detached host processes needs flatpak-spawn --host and talk access to org.freedesktop.Flatpak, which draws scrutiny in Flathub review. A localhost LiteLLM call needs --share=network. Search-provider and D-Bus service files must be exported correctly.",
+   "Detached spawning: std CommandExt::setsid is still nightly-only, pre_exec is unsafe and disables the posix_spawn fast path, and a long-lived service process accumulates zombies unless children are reaped.",
+   "Search-provider handlers run on the GTK main thread. Slow regex evaluation or blocking HTTP inside GetInitialResultSet stalls both GNOME Shell results and the UI. Bound the work, and use gio::spawn_blocking for blocking I/O.",
+   "Test infrastructure: GTK tests run serially on one thread and need a display (xvfb-run, GSK_RENDERER=cairo). gio::TestDBus changes the process-wide DBUS_SESSION_BUS_ADDRESS, so isolate those tests. CI images must include dbus-daemon and Xvfb.",
+   "Not verified: openSUSE test-package names (dbus-1-daemon, xvfb-run); Fedora 43 glibc 2.42; the Ubuntu cargo-1.91 package name; whether regex rejects {,n} at compile time; toml_edit's DEFAULT_TABLE_DECOR value; the exact default inactivity behavior of GApplication in service mode; release binary sizes (Fedora installsize figures include data files, so a stripped binary in the low single-digit MB range is only an estimate)."
+  ]
+ }
+}
