@@ -16,6 +16,12 @@ A small window with one text field and the same rows as the search bar. Open it 
 <kbd>Tab</kbd> choose another, and <kbd>Esc</kbd> or clicking elsewhere closes it. After closing, it
 keeps running for `[prompt] idle_minutes` (default 30) so it reopens instantly.
 
+The **gear** next to the text field, or <kbd>Ctrl</kbd>+<kbd>,</kbd>, opens **settings**:
+- **General:** the keyboard shortcut (press the new combination, or Backspace to remove it), how long
+  the box keeps running, result limits, and links to `agents.toml` and these docs.
+- **Agents:** turn each agent on or off, set its priority, and choose the working folder for terminal agents.
+- **Gateway:** the LiteLLM URL, chat URL, Auto model and key, with a **Test** button.
+
 ## Picking a model and effort
 Tokens can go anywhere in the query; everything else is the prompt.
 

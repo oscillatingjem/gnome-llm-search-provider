@@ -162,6 +162,51 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(query.parse(["!xh", "go"]).effort, "xhigh")
 
 
+class SettingsTests(unittest.TestCase):
+    """settings.toml (written by the settings window) overrides agents.toml."""
+
+    def setUp(self):
+        import shutil, tempfile
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
+        shutil.copy(ROOT / "examples" / "config" / "agents.toml", self.dir / "agents.toml")
+
+    def test_overrides_apply(self):
+        config.write_settings({"search": {"min_chars": 5}, "prompt": {"idle_minutes": 0},
+                               "app": {"claude-cli": {"enabled": False, "cwd": "~/Projects", "priority": 2.5}}},
+                              self.dir)
+        c = config.load(self.dir)
+        cli = next(a for a in c.apps if a.id == "claude-cli")
+        self.assertEqual((c.min_chars, c.prompt_idle_minutes), (5, 0))
+        self.assertEqual((cli.enabled, cli.cwd, cli.priority), (False, "~/Projects", 2.5))
+        self.assertNotIn("app:claude-cli", [x.id for x in catalog.app_candidates(c)])
+
+    def test_unknown_keys_are_ignored(self):
+        (self.dir / "settings.toml").write_text('[search]\nbogus = 1\n[app.claude-cli]\ncommand = ["rm"]\n')
+        c = config.load(self.dir)
+        cli = next(a for a in c.apps if a.id == "claude-cli")
+        self.assertEqual(cli.command[0], "ptyxis")      # commands can only come from agents.toml
+
+    def test_round_trip_with_awkward_strings(self):
+        data = {"gateway": {"chat_url": 'http://x/?q={prompt}&m="a\\b"'}, "app": {"odd id": {"cwd": "~/ä ö"}}}
+        config.write_settings(data, self.dir)
+        self.assertEqual(config.read_settings(self.dir), data)
+
+    def test_signature_changes_on_write(self):
+        before = config.signature(self.dir)
+        config.write_settings({"search": {"max_rows": 3}}, self.dir)
+        self.assertNotEqual(before, config.signature(self.dir))
+
+    def test_set_secret_keeps_other_lines_and_mode(self):
+        path = self.dir / "secrets.env"
+        path.write_text("# comment\nOTHER=1\nLITELLM_MASTER_KEY=old\n")
+        config.set_secret("LITELLM_MASTER_KEY", "new", self.dir)
+        self.assertEqual(path.read_text(), "# comment\nOTHER=1\nLITELLM_MASTER_KEY=new\n")
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        config.set_secret("LITELLM_MASTER_KEY", "", self.dir)
+        self.assertNotIn("LITELLM_MASTER_KEY", path.read_text())
+
+
 class UrlTests(unittest.TestCase):
     def test_app_url_encodes_prompt(self):
         url = launch.url_for(EXAMPLE, "app:claude-chat", None, None, "hello & goodbye?")

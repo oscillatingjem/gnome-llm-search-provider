@@ -12,11 +12,26 @@
     install/         rendered service and desktop files (the installer recreates these)
 ```
 
+### `settings.toml`
+Written by the settings window (gear on the prompt box). It holds only what you changed there, and
+overrides `agents.toml`, so the window never rewrites your commented file. These keys can be set:
+
+| Section | Keys |
+|---|---|
+| `[search]` | `min_chars`, `max_rows` |
+| `[prompt]` | `idle_minutes` |
+| `[routing]` | `low_effort_max_words` |
+| `[gateway]` | `url`, `key_env`, `chat_url`, `auto_model` |
+| `[app."<id>"]` | `enabled`, `priority`, `cwd` |
+
+Anything else in it is ignored. Delete a line (or the file, or use **Reset Settings**) to go back to
+`agents.toml`. The gateway key typed in the window is saved to `secrets.env`, never to `settings.toml`.
+
 `LLM_SEARCH_HOME` is read when you run `install.sh`, and the installer writes it into the D-Bus service
 file. To move your config, re-run the installer with the new value.
 
-The provider reads config when it starts, and it exits after 60 s without searches. To apply a change
-right away, run `pkill -f llm_search`; the next search starts it again.
+Both the search provider and the prompt box notice when any of the three files changes, and reload it
+on the next search or the next time the box opens.
 
 ## `agents.toml`
 
@@ -41,6 +56,7 @@ right away, run `pkill -f llm_search`; the next search starts it again.
 | `efforts` | | Effort levels the link accepts (`{effort}`) |
 | `priority` | | Added to the ranking score (default 0) |
 | `copy_prompt` | | Also copy the prompt to the clipboard (for apps whose links can't carry it) |
+| `enabled` | | `false` hides the row (default `true`); also a switch in the settings window |
 
 ### `[aliases]`
 `name = "target"`, where the target is `"<app id>"`, `"<app id>:<model>"` or `"<gateway model>"`.

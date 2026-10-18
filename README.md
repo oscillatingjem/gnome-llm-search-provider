@@ -22,6 +22,9 @@ Agent Search
   immediately, with the model and effort you pick) are set up out of the box.
 - **Prompt box.** A spotlight-style window with the same rows, opened from the app grid, a keyboard
   shortcut, or the category icon in search. It stays running after first use so it opens instantly.
+- **Settings window.** The gear on the prompt box (or <kbd>Ctrl</kbd>+<kbd>,</kbd>) opens settings:
+  the keyboard shortcut, turning agents on or off, their priority and working folder, result limits, and
+  the optional gateway. Changes apply immediately.
 - **Any API model, through a gateway.** Point it at a [LiteLLM](https://github.com/BerriAI/litellm) proxy
   and every model the proxy serves shows up: OpenAI, Anthropic API, LM Studio, Ollama, vLLM, and others.
   Answers open in [Open WebUI](https://github.com/open-webui/open-webui) or any chat UI that takes the
@@ -102,10 +105,10 @@ Config lives in `~/.llm-search/config/`:
 | File | What it holds |
 |---|---|
 | `agents.toml` | App agents, `@aliases`, ranking rules, the optional gateway |
+| `settings.toml` | Written by the settings window; overrides `agents.toml`. Delete it to go back |
 | `secrets.env` | API keys for the gateway (mode 600; never committed) |
 
-The provider reloads its config when it restarts, which happens on its own after 60 s without searches
-(or run `pkill -f "llm_search"`). See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and
+Changes apply on the next search or the next time the prompt box opens; no restart needed. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and
 [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Commands

@@ -17,7 +17,7 @@ def app_candidates(config: Config) -> list[Candidate]:
     return [
         Candidate(id=f"app:{a.id}", kind=APP, name=a.name, tags=a.tags, efforts=a.efforts,
                   models=a.models, icon=a.icon, priority=a.priority)
-        for a in config.apps if app_available(a)
+        for a in config.apps if a.enabled and app_available(a)
     ]
 
 

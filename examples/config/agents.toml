@@ -11,9 +11,13 @@
 #    The original is examples/config/agents.toml in the project repo.
 #
 #  APPLYING CHANGES
-#    The provider reads this file when it starts, and stops after 60 seconds
-#    without searches. To apply a change right away:
-#        pkill -f llm_search          (the next search starts it again)
+#    Saved changes apply on the next search, or the next time the prompt box opens.
+#
+#  THE SETTINGS WINDOW
+#    The gear on the prompt box (or Ctrl+,) changes common settings without editing
+#    this file. It saves them to settings.toml in this folder, which overrides the
+#    values here. If a value here seems to be ignored, check settings.toml (or use
+#    "Reset Settings" in the window).
 #
 #  TESTING CHANGES WITHOUT GNOME
 #    llm-search query fix this python traceback   # the rows GNOME would get, top first
@@ -90,6 +94,8 @@ idle_minutes = 30
 #    priority    A number added to its score. Higher means it ranks higher. Default 0.
 #    copy_prompt true also copies the prompt to the clipboard (for apps that can't
 #                receive it), so you can paste it with Ctrl+V.
+#    enabled     false hides the row without deleting it. Default true.
+#                (Also a switch on the settings window's Agents page.)
 #
 #  PLACEHOLDERS (usable in url and command)
 #    {prompt}    what you typed, minus @name and !level

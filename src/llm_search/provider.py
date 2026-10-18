@@ -47,10 +47,19 @@ class SearchProvider:
     def __init__(self):
         self.config = config_mod.load()
         self.gateway = catalog.Gateway(self.config)
+        self._signature = config_mod.signature()
         self.rows: dict[str, ranker.Row] = {}
         self.prompt = ""
 
+    def reload_if_changed(self) -> None:
+        sig = config_mod.signature()
+        if sig != self._signature:
+            self.config = config_mod.load()
+            self.gateway = catalog.Gateway(self.config)
+            self._signature = sig
+
     def search(self, terms: list[str]) -> list[str]:
+        self.reload_if_changed()
         q = query_mod.parse(terms)
         rows = ranker.rank(q, catalog.candidates(self.config, self.gateway), self.config)
         self.prompt = q.prompt

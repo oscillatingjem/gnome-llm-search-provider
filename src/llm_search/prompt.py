@@ -1,5 +1,7 @@
 """The prompt box: a spotlight-style window for sending a prompt straight to an agent.
 
+The gear (or Ctrl+,) opens the settings window (prefs.py).
+
 Opened from the app grid, a keyboard shortcut, or the search category's icon. It ranks the
 same rows as the GNOME search provider, and stays running in the background after the first
 use (for `[prompt] idle_minutes`), so it reopens instantly.
@@ -14,6 +16,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from . import APP_ID, catalog, config as config_mod, launch, query as query_mod, ranker  # noqa: E402
+from .prefs import SettingsWindow  # noqa: E402
 
 CSS = """
 .prompt-box { padding: 12px; }
@@ -41,11 +44,18 @@ class PromptWindow(Adw.ApplicationWindow):
         self.rows.add_css_class("prompt-rows")
         self.rows.connect("row-activated", lambda _box, row: self.run(row))
 
-        self.hint = Gtk.Label(label="Enter to send · ↑↓ to choose · Esc to close",
+        self.hint = Gtk.Label(label="Enter to send · ↑↓ to choose · Esc to close · Ctrl+, for settings",
                               css_classes=["dim-label", "caption"], margin_top=4)
 
+        gear = Gtk.Button(icon_name="emblem-system-symbolic", tooltip_text="Settings (Ctrl+,)",
+                          valign=Gtk.Align.CENTER, css_classes=["flat", "circular"])
+        gear.connect("clicked", lambda *_: app.open_settings())
+        top = Gtk.Box(spacing=6)
+        top.append(self.entry)
+        top.append(gear)
+
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, css_classes=["prompt-box"])
-        box.append(self.entry)
+        box.append(top)
         box.append(self.rows)
         box.append(self.hint)
         self.set_content(box)
@@ -94,9 +104,12 @@ class PromptWindow(Adw.ApplicationWindow):
 
     # --- window -----------------------------------------------------------------
 
-    def on_key(self, _ctl, keyval, _code, _state) -> bool:
+    def on_key(self, _ctl, keyval, _code, state) -> bool:
         if keyval == Gdk.KEY_Escape:
             self.dismiss()
+            return True
+        if keyval == Gdk.KEY_comma and state & Gdk.ModifierType.CONTROL_MASK:
+            self.app.open_settings()
             return True
         if keyval in (Gdk.KEY_Down, Gdk.KEY_Tab):
             self.move(1)
@@ -109,6 +122,7 @@ class PromptWindow(Adw.ApplicationWindow):
     def summon(self, text: str | None = None) -> None:
         if text is not None:
             self.entry.set_text(text)
+        self.refresh()
         self.present()
         self.entry.grab_focus()
         self.entry.set_position(-1)
@@ -124,11 +138,16 @@ class PromptApp(Adw.Application):
         self.config = config_mod.load()
         self.gateway = catalog.Gateway(self.config)
         self.window: PromptWindow | None = None
+        self.settings: SettingsWindow | None = None
+        self._signature = config_mod.signature()
         self._idle_source = 0
 
         search = Gio.SimpleAction.new("search", GLib.VariantType.new("s"))
         search.connect("activate", lambda _a, text: self.open(text.get_string()))
         self.add_action(search)
+        prefs = Gio.SimpleAction.new("preferences", None)
+        prefs.connect("activate", lambda *_: self.open_settings())
+        self.add_action(prefs)
 
     def do_startup(self):
         Adw.Application.do_startup(self)
@@ -143,12 +162,30 @@ class PromptApp(Adw.Application):
 
     def open(self, text: str | None) -> None:
         self.cancel_idle_timer()
+        if config_mod.signature() != self._signature:
+            self.reload()
         if self.window is None:
             self.window = PromptWindow(self)
         self.window.summon(text)
 
+    def open_settings(self) -> None:
+        self.cancel_idle_timer()
+        if self.window is not None and self.window.get_visible():
+            self.window.set_visible(False)
+        if self.settings is None or not self.settings.get_visible():
+            self.settings = SettingsWindow(self)
+        self.settings.present()
+
+    def reload(self) -> None:
+        """Re-read the config files (after the settings window saves, or on outside edits)."""
+        self.config = config_mod.load()
+        self.gateway = catalog.Gateway(self.config)
+        self._signature = config_mod.signature()
+
     def start_idle_timer(self) -> None:
         self.cancel_idle_timer()
+        if any(w.get_visible() for w in self.get_windows()):
+            return  # e.g. the settings window is still open
         minutes = self.config.prompt_idle_minutes
         if minutes <= 0:
             self.quit()
