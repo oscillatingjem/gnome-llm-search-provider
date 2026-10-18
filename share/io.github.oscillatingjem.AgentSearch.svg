@@ -57,7 +57,7 @@
   <!-- the lens: the operative, magnified, gray skin and red outfit -->
   <circle cx="64" cy="64" r="23" fill="#5e5c64"/>
   <g clip-path="url(#lens)">
-    <use href="#operative" fill="#c0bfbc" color="#e01b24"
+    <use href="#operative" fill="#c0bfbc" color="#c53037"
          transform="translate(64 67.5) scale(1.04) translate(-32 -64)"/>
   </g>
   <!-- glass: a faint frosted half and a curved glint through the middle -->
