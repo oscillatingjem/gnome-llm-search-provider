@@ -15,7 +15,7 @@ fn golden(name: &str) -> Vec<Value> {
 }
 
 fn examples() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/config")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden")
 }
 
 fn which(p: &str) -> Option<String> {

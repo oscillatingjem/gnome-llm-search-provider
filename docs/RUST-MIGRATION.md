@@ -1,5 +1,9 @@
 # Rust migration plan
 
+> **Done (2026-10-19, 0.6.0):** the Rust build replaced the Python one. It runs under the real IDs, and
+> the Python code is deleted. `tests/golden/` keeps the recorded Python behavior as a regression test.
+> Still open: prebuilt binaries from CI. The rest of this file is the history of how it was planned.
+
 > **Update (2026-10-18): the approach changed to a parallel build.** Instead of switching components
 > in place one by one, the Rust version is built in full on the `rust` branch and installed **next to**
 > the Python version under its own IDs (`io.github.oscillatingjem.AgentSearchRs`, shown as

@@ -1,0 +1,302 @@
+# ==============================================================================
+#  llm-search configuration: agents.toml
+# ==============================================================================
+#
+#  This file decides what appears in the "Agent Search" category of GNOME search
+#  and in the prompt box, and what happens when you pick a row.
+#
+#  WHERE IT LIVES
+#    $LLM_SEARCH_HOME/config/agents.toml   (default: ~/.llm-search/config/agents.toml)
+#    The installer copies this file there once and never overwrites your copy.
+#    The original is examples/config/agents.toml in the project repo.
+#
+#  APPLYING CHANGES
+#    Saved changes apply on the next search, or the next time the prompt box opens.
+#
+#  THE SETTINGS WINDOW
+#    The gear on the prompt box (or Ctrl+,) edits this same file: it changes just the
+#    value on the line in question and keeps every comment, so this file and the
+#    window always agree. "Restore Defaults" there resets the limits in [search],
+#    [prompt] and [routing] to factory values, keeping your agents and rules.
+#
+#  TESTING CHANGES WITHOUT GNOME
+#    llm-search query fix this python traceback   # the rows GNOME would get, top first
+#    llm-search test                              # the project's own tests
+#    If the file has a syntax error, no Agent Search rows appear at all; check with
+#        python3 -c "import tomllib; tomllib.load(open('$HOME/.llm-search/config/agents.toml','rb'))"
+#
+#  TOML IN 30 SECONDS
+#    # comment                     Anything after # is ignored.
+#    key = "text"                  Strings use double quotes; \ starts an escape (\n, \").
+#    key = 'C:\raw\text'           Single quotes are literal: no escapes. Use them for regexes.
+#    key = 3                       Numbers, and true / false, are written bare.
+#    key = ["a", "b"]              Arrays use square brackets and may span several lines.
+#    [section]                     The keys after a [section] header belong to it.
+#    [[app]]                       Double brackets add one more entry to a list of tables:
+#                                  each [[app]] block below is one agent.
+#
+#  SEARCH SYNTAX (what you type in the search bar)
+#    @name    send to a specific agent or model: @code, @opus, @son (prefixes work)
+#    !level   effort: !low !med !high !xhigh !max  (short forms: !l !m !h !xh !x)
+#    Everything else is the prompt. Example:  @opus !high refactor the backup script
+#
+#  Full reference: docs/CONFIGURATION.md and docs/PROVIDERS.md in the project repo.
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+#  [search]: when rows appear
+# ------------------------------------------------------------------------------
+[search]
+
+# Prompts shorter than this many characters show no Agent Search rows, so typing
+# "fi" to find Firefox isn't cluttered. @name and !level tokens don't count.
+min_chars = 3
+
+# The most rows to show. GNOME displays about five per category.
+max_rows = 5
+
+
+# ------------------------------------------------------------------------------
+#  [prompt]: the prompt box (spotlight-style window)
+# ------------------------------------------------------------------------------
+#  Open it from the app grid ("Agent Search"), with the keyboard shortcut chosen
+#  at install time (./install.sh --shortcut '<Primary><Super>space'), by clicking
+#  the Agent Search icon in search results, or with:  llm-search prompt [text]
+#  It shows the same rows as the search bar. Enter sends, Up/Down choose, Esc closes.
+# ------------------------------------------------------------------------------
+[prompt]
+
+# After you close it, the box keeps running in the background for this many
+# minutes, so it opens instantly next time (it uses about 40 MB). 0 = quit at once.
+idle_minutes = 30
+
+
+# ------------------------------------------------------------------------------
+#  [[app]]: app agents
+# ------------------------------------------------------------------------------
+#  Each [[app]] block is one row that can appear in search. A row either opens a
+#  link (url) or runs a program (command).
+#
+#  KEYS
+#    id          Required. Unique, lowercase. Also matches @id in the search bar.
+#    name        Required. The row's title.
+#    url         A link to open, e.g. claude://... or https://...
+#    command     A program to run, as a list of arguments (see "COMMANDS" below).
+#    cwd         Folder the command runs in. Default "~" (your home folder).
+#    requires    Programs that must be installed, e.g. ["claude"]. If any is
+#                missing, the row is hidden instead of failing.
+#    icon        An icon name from your icon theme, e.g. "utilities-terminal".
+#    tags        What this agent is good at. Used for ranking (see [routing]).
+#                Built-in rules use: coding, writing, reasoning, private, fast.
+#    models      Models the agent accepts through {model}. Lets @opus etc. pick one.
+#    efforts     Effort levels it accepts through {effort}: low medium high xhigh max.
+#    priority    A number added to its score. Higher means it ranks higher. Default 0.
+#    copy_prompt true also copies the prompt to the clipboard (for apps that can't
+#                receive it), so you can paste it with Ctrl+V.
+#    enabled     false hides the row without deleting it. Default true.
+#                (Also a switch on the settings window's Agents page.)
+#
+#  PLACEHOLDERS (usable in url and command)
+#    {prompt}    what you typed, minus @name and !level
+#    {model}     the model picked with @name, or empty
+#    {effort}    the effort from !level (or the suggested one), or empty
+#
+#  URLS
+#    Values are URL-encoded for you. Query parameters that end up empty are
+#    dropped, so  ?q={prompt}&model={model}  becomes  ?q=hello  when no model is chosen.
+#
+#  COMMANDS
+#    Written as a list, one item per argument, and never run through a shell:
+#    the prompt is always passed as one argument, so quotes, ; and $ in it are safe.
+#      - An item whose placeholder is empty is left out.
+#      - A nested list is an optional group, left out as a whole if any of its
+#        placeholders is empty:  ["--model", "{model}"]  →  "--model opus", or nothing.
+#      - Put "--" before "{prompt}" so a prompt starting with "-" isn't read as an option.
+# ------------------------------------------------------------------------------
+
+# Claude Desktop, new chat. Opens the app with the prompt filled in; you press Enter.
+# (Claude Desktop links can't send automatically, or choose a model or effort.)
+[[app]]
+id = "claude-chat"
+name = "Ask Claude"
+url = "claude://claude.ai/new?q={prompt}"
+icon = "claude-desktop"
+tags = ["writing", "reasoning", "general"]
+priority = 1.0        # the default choice for everyday questions
+
+# Claude Desktop, new Claude Code session. Prompt filled in; you press Enter.
+# To start in a project, add a folder (an absolute path; repeat for several):
+#   url = "claude://code/new?q={prompt}&folder=/home/you/Projects/my-app"
+[[app]]
+id = "claude-code"
+name = "Claude Code"
+url = "claude://code/new?q={prompt}"
+icon = "claude-desktop"
+tags = ["coding", "agent"]
+
+# Claude Code in a terminal window. Runs the prompt IMMEDIATELY, with the model
+# and effort you choose (@opus !high). Needs the Claude Code CLI:
+#   curl -fsSL https://claude.ai/install.sh | bash   then run `claude` once to log in.
+# Hidden until `claude` is installed.
+[[app]]
+id = "claude-cli"
+name = "Claude Code (terminal)"
+command = ["ptyxis", "--new-window", "--", "claude",
+           ["--model", "{model}"], ["--effort", "{effort}"], "--", "{prompt}"]
+cwd = "~"             # tip: set this to the folder you usually work in, e.g. "~/Projects"
+requires = ["ptyxis", "claude"]
+icon = "utilities-terminal"
+tags = ["coding", "agent"]
+models = ["opus", "sonnet", "haiku", "fable"]
+efforts = ["low", "medium", "high", "xhigh", "max"]
+priority = 0.5        # ranks above the desktop "Claude Code" row for coding prompts
+
+# --- More examples: remove the leading "# " to use one ------------------------
+
+# Same as above, for other terminals. Replace the start of `command` with:
+#   GNOME Console:   ["kgx", "--", "claude", ...]
+#   GNOME Terminal:  ["gnome-terminal", "--", "claude", ...]
+#   Kitty:           ["kitty", "claude", ...]
+#   Konsole:         ["konsole", "-e", "claude", ...]
+
+# Claude Code pinned to one project, with its own @name (@work):
+# [[app]]
+# id = "work"
+# name = "Claude Code · work repo"
+# command = ["ptyxis", "--new-window", "--", "claude", ["--effort", "{effort}"], "--", "{prompt}"]
+# cwd = "~/Projects/git/github/you/work-repo"
+# requires = ["ptyxis", "claude"]
+# icon = "utilities-terminal"
+# tags = ["coding"]
+# efforts = ["low", "medium", "high"]
+
+# A local model with Ollama, answering in a terminal (`ollama run MODEL PROMPT`).
+# `ollama run` needs a model, so this names one directly instead of using {model}:
+# [[app]]
+# id = "ollama"
+# name = "Ollama · llama3.2"
+# command = ["ptyxis", "--new-window", "--", "ollama", "run", "llama3.2", "{prompt}"]
+# requires = ["ptyxis", "ollama"]
+# icon = "utilities-terminal"
+# tags = ["private", "fast"]
+
+# A website that takes the prompt in its URL (check that the site supports it):
+# [[app]]
+# id = "perplexity"
+# name = "Perplexity"
+# url = "https://www.perplexity.ai/search?q={prompt}"
+# icon = "web-browser"
+# tags = ["research"]
+
+
+# ------------------------------------------------------------------------------
+#  [aliases]: your own @names
+# ------------------------------------------------------------------------------
+#  Format:   name = "app-id"   or   name = "app-id:model"   or   name = "gateway-model"
+#  Without an alias, @name still matches by prefix:
+#    app ids and names (@claude-c), app model names (@son → sonnet in Claude Code
+#    terminal), and gateway model names.
+#  Aliases are checked first, so they win when a prefix would be ambiguous.
+# ------------------------------------------------------------------------------
+[aliases]
+claude = "claude-chat"      # @claude → Ask Claude
+code = "claude-code"        # @code   → Claude Code (desktop)
+cli = "claude-cli"          # @cli    → Claude Code (terminal)
+term = "claude-cli"         # @term   → Claude Code (terminal)
+# deep = "claude-cli:opus"  # @deep   → Claude Code (terminal) with Opus
+# quick = "claude-cli:haiku"
+# llama = "ollama"
+
+
+# ------------------------------------------------------------------------------
+#  [gateway]: optional, for API models (OpenAI, Anthropic API, LM Studio, ...)
+# ------------------------------------------------------------------------------
+#  Connects a LiteLLM proxy. Every model it serves shows up as a row, plus an
+#  "Auto" row that lets LiteLLM pick. Answers open in a chat UI such as Open WebUI.
+#  Setup guide: docs/PROVIDERS.md. Leave this commented out until the proxy runs.
+#
+#    url         LiteLLM's address.
+#    key_env     Name of the key in secrets.env (same folder as this file) that the
+#                proxy expects. secrets.env holds lines like:  LITELLM_MASTER_KEY=sk-...
+#    chat_url    Where answers open. {model} and {prompt} are filled in.
+#    auto_model  The LiteLLM model shown as the "Auto" row.
+# ------------------------------------------------------------------------------
+# [gateway]
+# url = "http://127.0.0.1:4000"
+# key_env = "LITELLM_MASTER_KEY"
+# chat_url = "http://127.0.0.1:3000/?models={model}&q={prompt}"
+# auto_model = "smart-router"
+
+
+# ------------------------------------------------------------------------------
+#  [routing]: how rows are ranked, and which effort is suggested
+# ------------------------------------------------------------------------------
+#  HOW RANKING WORKS
+#    1. Each [[routing.rule]] below checks your prompt against its patterns.
+#    2. If any pattern matches, every agent whose `tags` include the rule's `tag`
+#       gets the rule's `weight` added to its score.
+#    3. Each agent's `priority` is added too, and rows are shown highest first.
+#    An @name always comes first, and the best app agent always stays visible.
+#
+#    Worked example: "fix this python traceback"
+#      The coding rule matches (python, traceback)  → +3 for agents tagged "coding"
+#      Claude Code (terminal) = 3 + 0.5 priority = 3.5   ← first
+#      Claude Code            = 3 + 0           = 3.0
+#      Ask Claude             = 0 + 1.0         = 1.0
+#
+#  SUGGESTED EFFORT (when you don't type !level)
+#    high    if any high_effort_patterns entry matches
+#    low     if the prompt has low_effort_max_words words or fewer
+#    medium  otherwise (high for prompts over 60 words)
+#    Agents that don't support the suggested level use the closest one they do.
+#
+#  PATTERNS are regular expressions, matched case-insensitively anywhere in the
+#  prompt. Write them in 'single quotes' so backslashes stay literal:
+#    '\bgit\b'       the word "git" (\b = word boundary), but not "digit"
+#    'deploy|ship'   either word
+#    '```'           a fenced code block
+#  Try patterns at https://regex101.com (choose the Python flavor).
+# ------------------------------------------------------------------------------
+[routing]
+low_effort_max_words = 8
+high_effort_patterns = [
+  '\b(why|design|architect\w*|debug\w*|compare|trade-?offs?|plan|prove|step by step|analy[sz]e)\b',
+]
+
+# Each [[routing.rule]] block is one rule: tag, weight, and a list of patterns.
+[[routing.rule]]
+tag = "coding"
+weight = 3
+patterns = [
+  '\b(code|function|class|bug|regex|script|refactor|compile|stack ?trace|traceback|exception|git|bash|python|javascript|typescript|rust|golang|sql|api|unit tests?)\b',
+  '```',          # a pasted code block
+  '\w+\(\)',      # something that looks like a call: main()
+]
+
+[[routing.rule]]
+tag = "writing"
+weight = 2
+patterns = ['\b(write|draft|email|rewrite|summari[sz]e|proofread|tone|essay|letter|post)\b']
+
+[[routing.rule]]
+tag = "reasoning"
+weight = 2
+patterns = ['\b(why|explain|compare|plan|decide|pros and cons|trade-?offs?)\b']
+
+# Sends sensitive prompts towards agents tagged "private" (e.g. local models).
+[[routing.rule]]
+tag = "private"
+weight = 4
+patterns = ['\b(private|confidential|offline|local only|password|medical|salary)\b']
+
+[[routing.rule]]
+tag = "fast"
+weight = 1
+patterns = ['^\S+(\s+\S+){0,5}\??$']   # very short questions (up to about six words)
+
+# Your own rule, e.g. send research questions to an agent tagged "research":
+# [[routing.rule]]
+# tag = "research"
+# weight = 3
+# patterns = ['\b(sources?|papers?|studies|citations?|latest|news)\b']

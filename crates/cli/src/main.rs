@@ -15,6 +15,7 @@ Usage: llm-search <command> [args]
   query WORDS...        Show the rows GNOME search would get for WORDS
   check                 Load the config and compile every routing pattern
   status                Show which config and IDs this build uses
+  version               Print the version
   search-provider       Run the GNOME search provider (started by D-Bus)
 ";
 
@@ -28,6 +29,10 @@ fn main() {
         "query" => query_cmd(&args[1..]),
         "check" | "test" => check(),
         "status" => status(),
+        "version" | "--version" => {
+            println!("llm-search {}", env!("CARGO_PKG_VERSION"));
+            0
+        }
         "help" | "-h" | "--help" => {
             print!("{USAGE}");
             0

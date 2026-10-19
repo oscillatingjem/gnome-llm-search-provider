@@ -17,10 +17,21 @@ A small window with one text field and the same rows as the search bar. Open it 
 keeps running for `[prompt] idle_minutes` (default 30) so it reopens instantly.
 
 The **gear** next to the text field, or <kbd>Ctrl</kbd>+<kbd>,</kbd>, opens **settings**:
-- **General:** the keyboard shortcut (press the new combination, or Backspace to remove it), how long
-  the box keeps running, result limits, and links to `agents.toml` and these docs.
-- **Agents:** turn each agent on or off, set its priority, and choose the working folder for terminal agents.
-- **Gateway:** the LiteLLM URL, chat URL, Auto model and key, with a **Test** button.
+- **General:**
+  - the keyboard shortcut (press the new combination, or Backspace to remove it);
+  - how long the box keeps running, and result limits;
+  - **Restore Defaults**;
+  - links to `agents.toml` and these docs.
+- **Agents:** every field of every agent. That covers name, id, link, command, working folder, required
+  programs, tags, models, effort levels, icon, priority, copy-prompt and on/off. You can also add,
+  delete and rename agents; renaming updates aliases that point at the agent.
+- **Routing:** aliases, the patterns that suggest high effort, the low-effort word limit, and ranking
+  rules (tag, weight, patterns), each with add, edit and delete. Patterns turn red while they aren't
+  valid.
+- **Gateway:** the LiteLLM URL, chat URL, Auto model, key name and key, with a **Test** button.
+
+Every change is saved straight to `agents.toml`, keeping its comments, and only if the whole config is
+still valid.
 
 ## Picking a model and effort
 Tokens can go anywhere in the query; everything else is the prompt.

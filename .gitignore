@@ -3,3 +3,4 @@ __pycache__/
 # user config never belongs in the repo
 secrets.env
 .llm-search/
+/target

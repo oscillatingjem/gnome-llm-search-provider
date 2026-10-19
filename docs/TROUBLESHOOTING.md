@@ -26,12 +26,12 @@ journalctl --user -b | grep -i -E 'llm-search|LlmSearchProvider'
 ```
 To see errors as they happen, stop the provider and run it in a terminal:
 ```bash
-pkill -f llm_search
-PYTHONPATH=src LLM_SEARCH_HOME=~/.llm-search python3 -m llm_search
+llm-search status        # shows the provider's and prompt box's state
+~/.local/share/llm-search/engine/llm-search search-provider   # run it in the foreground; errors go to the terminal
 ```
 
 ## Config changes don't apply
-The provider loads config once at start. Run `pkill -f llm_search`; the next search starts it with the new config.
+Both the provider and the prompt box reload `agents.toml` when it changes, on the next search or the next time the box opens. If something seems stale, run `./install.sh` again: it restarts both.
 
 ## Gateway models are missing
 - Check `curl -H "Authorization: Bearer $KEY" http://127.0.0.1:4000/model/info`.
@@ -48,4 +48,4 @@ The provider loads config once at start. Run `pkill -f llm_search`; the next sea
 - If the box opens behind other windows or without keyboard focus, GNOME's focus-stealing prevention
   is in the way: please open an issue with your GNOME version.
 - Errors: `journalctl --user -b | grep -i AgentSearch`, or run it in a terminal:
-  `pkill -f llm_search.prompt; PYTHONPATH=src python3 -m llm_search.prompt`.
+  `~/.local/share/llm-search/engine/agent-search` (after closing the running one: `./install.sh` restarts it).

@@ -6,7 +6,8 @@
 - Any provider: desktop app agents through their links, and API models through a single gateway, so
   new models show up without any change to this project.
 - Suggestions for each prompt, plus choosing a model and effort explicitly while typing.
-- No shell patching (not an extension), no dependencies beyond the Python standard library and PyGObject.
+- No shell patching (not an extension). Fast and light: a Rust search provider that doesn't load GTK,
+  and a GTK 4 / libadwaita prompt box.
 
 ## Architecture
 
@@ -16,11 +17,11 @@ flowchart LR
     GS --> N["Other providers<br/>Apps · Files · Settings · Firefox"]
     GS -->|"D-Bus<br/>org.gnome.Shell.SearchProvider2"| P
 
-    subgraph P["llm-search provider (Python, D-Bus activated)"]
+    subgraph P["llm-search search-provider (Rust, no GTK, D-Bus activated)"]
         direction TB
-        Q["query.py<br/>@model · !effort · prompt"] --> RK["ranker.py<br/>tags × rules → rows + effort"]
-        C["catalog.py<br/>app agents + gateway models"] --> RK
-        RK --> L2["launch.py<br/>fill URL template → open"]
+        Q["core::query<br/>@model · !effort · prompt"] --> RK["core::ranker<br/>tags × rules → rows + effort"]
+        C["core::catalog<br/>app agents + gateway models"] --> RK
+        RK --> L2["core::launch → platform::execute<br/>fill URL / command → open or run"]
     end
 
     CFG[("$LLM_SEARCH_HOME/config<br/>agents.toml · secrets.env")] --> P
@@ -32,7 +33,8 @@ flowchart LR
         W --> GW
     end
 
-    K["Keyboard shortcut / app grid<br/>(gapplication launch)"] --> BOX["Prompt box<br/>prompt.py (GTK4)"]
+    K["Keyboard shortcut / app grid<br/>(llm-search prompt → D-Bus Activate)"] --> BOX["agent-search<br/>prompt box + settings (GTK 4 / libadwaita)"]
+    BOX -->|"settings: core::edit + core::structure<br/>in-place, comments kept"| CFG
     GS -.->|"category icon:<br/>ActivateAction search"| BOX
     BOX --> RK
     L2 -->|"gateway rows → chat_url"| W
@@ -43,19 +45,16 @@ flowchart LR
 ```
 
 ## Components
-| File | Role |
+A Cargo workspace. `core` has no GTK or GLib, so all logic is testable on its own.
+
+| Crate / file | Role |
 |---|---|
-| `src/llm_search/prompt.py` | The prompt box: a GTK4/libadwaita `Adw.Application` (`io.github.oscillatingjem.AgentSearch`), D-Bus-activatable, that ranks the same rows. It hides instead of quitting and exits after `[prompt] idle_minutes` |
-| `src/llm_search/prefs.py` | The settings window (`Adw.Window` with General / Agents / Gateway pages). Saves into `agents.toml` (and keys into `secrets.env`), then reloads; refreshes on outside edits |
-| `src/llm_search/toml_edit.py` | Changes single values in `agents.toml` in place, keeping comments, and verifies each edit |
-| `src/llm_search/shortcut.py` | Reads and writes the prompt box's GNOME custom shortcut |
-| `src/llm_search/provider.py` | Implements `SearchProvider2` on a `Gio.Application` (`IS_SERVICE`) that D-Bus starts on the first search and that exits after 60 s idle |
-| `src/llm_search/query.py` | Splits `@model` and `!effort` tokens from the prompt |
-| `src/llm_search/catalog.py` | Builds candidates from `[[app]]` entries and the gateway's `/model/info`, grouping effort variants by `model_info.base` |
-| `src/llm_search/ranker.py` | Scores candidates (`priority` + matched rule weights), suggests and clamps effort, picks the rows |
-| `src/llm_search/launch.py` | Fills URL templates, drops empty query parameters, opens the URL with `Gio.AppInfo.launch_default_for_uri` |
-| `src/llm_search/config.py` | Loads `agents.toml` and `secrets.env` from `$LLM_SEARCH_HOME` |
-| `bin/llm-search` | Installer and management CLI |
+| `crates/core` (`agent_search_core`) | `query` (tokens), `ranker` (scoring, effort, result ids), `catalog` (agents + gateway models), `launch` (URL and command templating → an `Activation`), `config` (load, `secrets.env`, change signature, factory reset), `edit` (in-place scalar edits), `structure` (lists, add/delete/rename agents and rules, aliases, whole-config validation), `pyre` (Python-`re`-compatible patterns on fancy-regex), `pystr` (Python string semantics) |
+| `crates/platform` | GLib side: running activations (copy, then spawn with `setsid` or open a URI), the gateway HTTP call (libsoup 3, 60 s cache, 30 s back-off), D-Bus calls to the prompt box, the GNOME shortcut |
+| `crates/cli` → `llm-search` | The `SearchProvider2` service (`llm-search search-provider`, owns its bus name, exits after 60 s idle) and the CLI (`prompt`, `query`, `check`, `status`, `version`). Links no GTK |
+| `crates/ui` → `agent-search` | The prompt box (`adw::Application` `io.github.oscillatingjem.AgentSearch`, D-Bus-activatable, stays resident for `[prompt] idle_minutes`) and the settings window (General / Agents / Routing / Gateway) |
+| `tests/golden/` | 577 cases recorded from the original Python implementation; `cargo test` replays them |
+| `bin/llm-search`, `install.sh` | Builds the binaries, installs them into `~/.local/share/llm-search/engine/`, renders and links the D-Bus services, desktop entry, icon and search-provider `.ini`, manages `environment.d` and the shortcut; also forwards `prompt`/`query`/`check` to the engine |
 | `share/` | Search provider `.ini`, D-Bus `.service` and `.desktop` templates, icon |
 
 ## Search flow
@@ -64,8 +63,8 @@ flowchart LR
    `<candidate>|<model>|<effort>|<query key>` (e.g. `app:claude-code|||48726cc7f5c5`). The query key is a
    short hash of the query: GNOME Shell caches rows by id, so the id has to change when the query does.
 3. `GetResultMetas` returns each row's title, description (prompt, effort, matched tags) and icon.
-4. `ActivateResult(id, terms)` builds the URL from the id and the prompt in `terms`, then opens it.
-   `LaunchSearch` (clicking the category icon) opens the top row.
+4. `ActivateResult(id, terms)` builds the URL or command from the id and the prompt in `terms`, then
+   opens or runs it. `LaunchSearch` (clicking the category icon) opens the prompt box with the query.
 
 ## Why these choices
 - **A search provider, not an extension.** `SearchProvider2` is a stable, documented D-Bus interface,
@@ -77,9 +76,10 @@ flowchart LR
   `XDG_DATA_DIRS` through `environment.d`. The D-Bus service and desktop entry can stay in
   `~/.local/share`, where per-user files are supported.
 - **One source of settings, edited in place.** The window and the user edit the same `agents.toml`.
-  General TOML writers drop comments, and that file's comments are its documentation, so
-  `toml_edit.py` changes only the line it needs, then parses the result and reads the value back
-  before an atomic save. Multi-line values are left to the file. Both processes compare file
+  General TOML writers drop comments, and that file's comments are its documentation, so the editor
+  (`core::edit`, `core::structure`) works line by line. It changes only the lines it needs, then
+  validates the whole config (it loads, ids are unique, every regex compiles) and reads each change
+  back before an atomic save. Replacing a list drops comments *inside* that list only. Both processes compare file
   timestamps before each search or open, so changes apply without restarting. Keys stay in
   `secrets.env` and the shortcut in GNOME's settings, where each belongs.
 - **The desktop entry is the prompt box.** GNOME only accepts a provider whose `DesktopId` entry is
@@ -95,6 +95,11 @@ flowchart LR
   swapped for another one.
 - **Effort as model variants.** Chat UIs can choose a model from a URL but not an effort setting. So
   each effort level is its own gateway model (`gpt@high`), grouped back into one row by `model_info.base`.
+- **Rust, in two binaries.** The search provider starts on every first keystroke after idle, so it
+  links no GTK and starts in about 30 ms (4 MB). The GTK 4 prompt box stays resident after use. Both
+  share `core`, which reproduces the original Python implementation exactly: its behavior was recorded
+  and is checked in `cargo test`. Users' routing patterns are Python `re` syntax, so `core::pyre`
+  translates the differences that are cheap to fix and rejects Rust-only syntax.
 - **Fast local ranking.** GNOME searches on every keystroke, so ranking uses regex rules that take
   milliseconds. Asking an LLM classifier on every keystroke would be too slow and would cost money.
   The **Auto** row hands the choice to the gateway's router for an actual request.

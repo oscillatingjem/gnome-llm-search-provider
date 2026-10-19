@@ -19,17 +19,16 @@ its table header when the key is missing, and checks the result before saving. S
 window always agree, and you can switch between them freely. If you edit the file while the window is
 open, the window refreshes.
 
-What the window can change:
+The window can change everything in the file:
+- **Agents:** add, delete, rename, and edit every key;
+- **Aliases;**
+- **Routing:** high-effort patterns and ranking rules;
+- **Limits and the gateway.**
 
-| Table | Keys |
-|---|---|
-| `[search]` | `min_chars`, `max_rows` |
-| `[prompt]` | `idle_minutes` |
-| `[routing]` | `low_effort_max_words` |
-| `[gateway]` | `url`, `chat_url`, `auto_model` |
-| each `[[app]]` | `enabled`, `priority`, `cwd` |
-
-Everything else (agents, commands, aliases, ranking rules) is edited in the file.
+Before each save it checks that the whole config still loads, that agent ids are unique, and that every
+pattern compiles; otherwise nothing is written. When the window replaces a list (for example a rule's
+patterns), comments *inside* that list are lost; all other comments are kept. Deleting an agent or rule
+also removes the comment lines directly above it.
 
 Two things are deliberately kept elsewhere, and the window shows and edits both:
 - **API keys** go in `secrets.env` (mode 600), so secrets never sit in a file you might share.
@@ -46,8 +45,8 @@ Upgrading from 0.4.0, which kept window settings in a separate `settings.toml`: 
 `LLM_SEARCH_HOME` is read when you run `install.sh`, and the installer writes it into the D-Bus service
 file. To move your config, re-run the installer with the new value.
 
-Both the search provider and the prompt box notice when any of the three files changes, and reload it
-on the next search or the next time the box opens.
+Both the search provider and the prompt box notice when `agents.toml` or `secrets.env` changes, and
+reload on the next search or the next time the box opens.
 
 ## `agents.toml`
 

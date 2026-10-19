@@ -21,9 +21,8 @@
 #
 #  TESTING CHANGES WITHOUT GNOME
 #    llm-search query fix this python traceback   # the rows GNOME would get, top first
-#    llm-search test                              # the project's own tests
 #    If the file has a syntax error, no Agent Search rows appear at all; check with
-#        python3 -c "import tomllib; tomllib.load(open('$HOME/.llm-search/config/agents.toml','rb'))"
+#        llm-search check
 #
 #  TOML IN 30 SECONDS
 #    # comment                     Anything after # is ignored.

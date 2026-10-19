@@ -1,9 +1,9 @@
 [workspace]
-members = ["core", "platform", "cli", "ui"]
+members = ["crates/core", "crates/platform", "crates/cli", "crates/ui"]
 resolver = "3"
 
 [workspace.package]
-version = "0.6.0-dev"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.92"
 license = "GPL-3.0-or-later"
@@ -19,8 +19,8 @@ codegen-units = 4
 strip = true
 
 [workspace.dependencies]
-agent-search-core = { path = "core" }
-agent-search-platform = { path = "platform" }
+agent-search-core = { path = "crates/core" }
+agent-search-platform = { path = "crates/platform" }
 glib = "0.22"
 gio = "0.22"
 soup3 = "0.9"
